@@ -589,7 +589,7 @@ textarea{resize:vertical;min-height:50px;}
       </div>
     </div>
     <div id="VR" style="display:none;">
-      <div id="NPD" class="CD"><div class="EM"><span class="bg">⏳</span>Esperando el número...<div style="margin-top:.5rem;font-size:11px;color:var(--t3);">Sale aprox. 10pm hora Dubai</div></div></div>
+      <div id="NPD" class="CD"><div class="EM"><span class="bg">⏳</span>Cargando…</div></div>
       <div id="NRS" style="display:none;">
         <div class="NB"><div class="NT">🎯 Número de Hoy</div><div class="NN" id="NNM">---</div><div style="font-size:11px;color:var(--vc);letter-spacing:2px;margin-top:4px;">Pick: <span id="NPK">--</span></div></div>
         <div class="CD"><div class="CT">Tus Ganadores</div><div id="NGN"></div></div>
@@ -1103,7 +1103,7 @@ const SU='https://soshfmpdymryihimcwik.supabase.co',SK='sb_publishable_QOgtf6qkS
 const PAGO=80,COM=0.15;// COM global para compatibilidad admin
 const sb=supabase.createClient(SU,SK);
 let rol=null,rts=null,autoFetchTimer=null;
-let banqueroId=null,recId=null,recCom=15;
+let banqueroId=null,recId=null,recCom=15,recToken=null;
 
 async function getBID(){
   // Recolectores: banqueroId viene de su login (recData.banquero_id), nunca de la sesion auth
@@ -1116,6 +1116,16 @@ async function getBID(){
 }
 const _RC={};// cache recolectores para editar
 
+// Si una RPC de recolector devuelve TOKEN_INVALIDO, la sesión expiró → cerrar
+function _tokenMurio(error){
+  if(error&&/TOKEN_INVALIDO/.test(error.message||error.hint||'')){
+    toast('Tu sesión expiró. Vuelve a iniciar sesión.',true);
+    setTimeout(()=>logout(),1600);
+    return true;
+  }
+  return false;
+}
+
 async function hashPass(str){
   const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -1126,6 +1136,8 @@ const p2=n=>String(n).padStart(2,'0');
 const fx=n=>parseFloat(parseFloat(n).toFixed(2));
 const fmtF=f=>{const[y,m,d]=f.split('-');const dt=new Date(+y,+m-1,+d);return['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][dt.getDay()]+' '+d+'/'+m+'/'+y;};
 const sigDia=()=>{const e=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));e.setDate(e.getDate()+1);return e.getFullYear()+'-'+p2(e.getMonth()+1)+'-'+p2(e.getDate());};
+// Escapa datos de usuario antes de inyectarlos en innerHTML (anti-XSS almacenado)
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const TA=[{id:'resumen',l:'📊 Resumen'},{id:'registrar',l:'Registrar'},{id:'resultado',l:'Resultado'},{id:'historial',l:'Historial'},{id:'ganancias-admin',l:'Ganancias'},{id:'fondo',l:'Fondo'},{id:'numeros',l:'🎯 Números'},{id:'exportar',l:'Exportar'},{id:'recolectores',l:'Equipo'},{id:'ajustes',l:'⚙️ Ajustes'}];
 const TR=[{id:'registrar',l:'Registrar'},{id:'resultado',l:'Resultado'},{id:'historial',l:'Historial'},{id:'ganancias-rec',l:'Ganancias'}];
@@ -1305,17 +1317,21 @@ async function login(){
     const usuario=document.getElementById('IP-usuario').value.trim().toLowerCase();
     if(!usuario){btn.textContent='Entrar';return toast('Ingresa tu usuario',true);}
     const hash=await hashPass(pass);
-    const {data,error}=await sb.rpc('verificar_recolector',{
+    // Multi-usuario en mismo dispositivo: borrar sesión Supabase-Auth (admin) para que el
+    // RPC del recolector corra como anon (si queda JWT authenticated → 42501 permission denied)
+    try{await sb.auth.signOut({scope:'local'});}catch{}
+    const {data,error}=await sb.schema('banca').rpc('login_recolector',{
       p_username:usuario, p_password_hash:hash
     });
     const recData=data&&data.length>0?data[0]:null;
-    console.log('Recolector login result:', recData, error);
     btn.textContent='Entrar';
     if(error||!recData){document.getElementById('LE').textContent='Usuario o contraseña incorrectos';document.getElementById('LE').style.display='block';return;}
     if(!recData.activo){document.getElementById('LE').textContent='Tu cuenta está desactivada. Contacta al banquero.';document.getElementById('LE').style.display='block';return;}
     recId=recData.id;
     recCom=parseFloat(recData.comision||15);
     banqueroId=recData.banquero_id;
+    recToken=recData.token;
+    localStorage.setItem('b_rectoken',recData.token||'');
     localStorage.setItem('b_recid',recData.id);
     localStorage.setItem('b_recnombre',recData.nombre||recData.username||usuario);
     localStorage.setItem('b_reccom',recData.comision||15);
@@ -1331,8 +1347,10 @@ async function login(){
 function logout(){
   if(rts){rts.unsubscribe();rts=null;}
   if(autoFetchTimer){clearInterval(autoFetchTimer);autoFetchTimer=null;}
-  rol=null;banqueroId=null;recId=null;recCom=15;dS();
-  localStorage.removeItem('b_recid');localStorage.removeItem('b_recnombre');localStorage.removeItem('b_reccom');localStorage.removeItem('b_recusr');localStorage.removeItem('b_recbid');localStorage.removeItem('b_rec_sesion_noche');
+  // Limpiar sesión Supabase-Auth (JWT del admin) para que el próximo usuario no la herede
+  try{sb.auth.signOut({scope:'local'});}catch{}
+  rol=null;banqueroId=null;recId=null;recCom=15;recToken=null;dS();
+  localStorage.removeItem('b_rectoken');localStorage.removeItem('b_recid');localStorage.removeItem('b_recnombre');localStorage.removeItem('b_reccom');localStorage.removeItem('b_recusr');localStorage.removeItem('b_recbid');localStorage.removeItem('b_rec_sesion_noche');
   // Limpiar datos en memoria para evitar contaminación entre banqueros
   ['RES-hoy-rec','RES-rec-count','RES-mes-gan','RES-fondo'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='--';});
   ['RES-equipo','RES-ultimos'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='';});
@@ -1386,7 +1404,7 @@ async function startApp(r){
   if(btnCP)btnCP.style.display=rol==='recolector'?'inline-block':'none';
   const adminRecSel=document.getElementById('ADMIN-REC-SEL');
   if(adminRecSel)adminRecSel.style.display=rol==='admin'?'block':'none';
-  if(rol==='admin')setTimeout(()=>{cargarRecsParaRegistro();detectarSesionActiva();iniciarScheduler();setTimeout(verificarCorteRegistro,800);},1200);
+  if(rol==='admin')setTimeout(async()=>{await cargarRecsParaRegistro();await detectarSesionActiva();iniciarScheduler();if(typeof loadJ==='function')loadJ();setTimeout(verificarCorteRegistro,800);},1200);
   if(rol==='recolector')setTimeout(()=>{detectarSesionActiva();setTimeout(verificarCorteRegistro,800);},1200);
   buildTabs();tick();setInterval(tick,1000);
   if(rol==='admin'){setTimeout(async()=>{await getBID();loadResumen();},500);}
@@ -1442,9 +1460,12 @@ window.addEventListener('load',async()=>{
   if(r){
     rs=r;
     if(r==='recolector'){
+      // Asegurar anon: que ningún JWT de admin viejo quede activo y rompa los RPC del recolector
+      try{await sb.auth.signOut({scope:'local'});}catch{}
       recId=localStorage.getItem('b_recid')||null;
       recCom=parseFloat(localStorage.getItem('b_reccom')||15);
       banqueroId=localStorage.getItem('b_recbid')||null;
+      recToken=localStorage.getItem('b_rectoken')||null;
     }
     if(r==='admin'){
       const {data:sd}=await sb.auth.getSession();
@@ -1483,8 +1504,10 @@ async function doAC(inp){
     if(!data||!data.length){l.classList.remove('on');return;}
     l.innerHTML=data.map(c=>{
       const nombre=c.nombre;
-      const highlighted=nombre.replace(new RegExp('^'+q,'i'),'<strong>'+nombre.substring(0,q.length)+'</strong>');
-      return'<div class="AI" onclick="pickC(\''+nombre.replace(/'/g,"\\'")+'\')">'+highlighted+'</div>';
+      const safe=esc(nombre);
+      const re=new RegExp('^'+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i');
+      const highlighted=safe.replace(re,'<strong>'+esc(nombre.substring(0,q.length))+'</strong>');
+      return'<div class="AI" data-n="'+safe+'" onclick="pickC(this.dataset.n)">'+highlighted+'</div>';
     }).join('');
     l.classList.add('on');
   }catch{l.classList.remove('on');}
@@ -1512,7 +1535,9 @@ function getSesionActualPorHora(){
 
 async function isDiaCerrado(){
   // Compatibilidad: retorna true si la sesión ACTUAL está cerrada
-  const sesion=getSesionActualPorHora();
+  // Sesión según RESULTADO del día aplicado, no por hora (mismo patrón que loadJ/insertarJugadas)
+  try{await detectarSesionActiva();}catch{}
+  const sesion=window._sesionActual||'dia';
   return isSesionCerrada(sesion);
 }
 
@@ -1687,8 +1712,17 @@ async function sincronizarCola(){
   if(!pendientes.length)return;
   let subidas=0;
   for(const j of pendientes){
-    const row={fecha:j.fecha,cliente:j.cliente,decena:j.decena,pick:j.pick,centena:j.centena,numero:j.numero,monto:j.monto,hora:j.hora,dia_cierre:null,sesion:j.sesion||'dia',recolector_id:j.recolector_id||null,banquero_id:j.banquero_id||null};
-    const {error}=await sb.from('jugadas').insert(row);
+    let error;
+    if(rol==='recolector'){
+      ({error}=await sb.schema('banca').rpc('recolector_insertar_jugadas',{
+        p_token:recToken,p_cliente:j.cliente,p_fecha:j.fecha,p_sesion:j.sesion||'dia',
+        p_jugadas:[{dec:j.decena,pick:j.pick,monto:j.monto,hora:j.hora}]
+      }));
+      if(error&&_tokenMurio(error))return;
+    }else{
+      const row={fecha:j.fecha,cliente:j.cliente,decena:j.decena,pick:j.pick,centena:j.centena,numero:j.numero,monto:j.monto,hora:j.hora,dia_cierre:null,sesion:j.sesion||'dia',recolector_id:j.recolector_id||null,banquero_id:j.banquero_id||null};
+      ({error}=await sb.from('jugadas').insert(row));
+    }
     if(!error){await marcarSync(j.lid);subidas++;}
   }
   if(subidas>0){
@@ -1832,7 +1866,7 @@ function parsearTexto(){
   document.getElementById('ITX-total').textContent=total.toFixed(2)+' CUP';
   document.getElementById('ITX-premio').textContent=premioMax.toFixed(0)+' CUP';
   const lista=document.getElementById('ITX-preview-lista');
-  lista.innerHTML=`<div style="font-weight:700;color:var(--tx);font-size:12px;margin-bottom:4px;">${cli}</div>`+
+  lista.innerHTML=`<div style="font-weight:700;color:var(--tx);font-size:12px;margin-bottom:4px;">${esc(cli)}</div>`+
     jugadas.map(j=>`<div style="color:var(--t2);font-size:11px;">Pick ${j.pick} · ${j.monto.toFixed(2)} CUP</div>`).join('');
   prevDiv.style.display='block';
 }
@@ -1924,18 +1958,28 @@ async function insertarJugadas(cli,jugadas,cerrado){
   // Usar fecha de registro activa si está seleccionada
   const fechaJ=fechaRegActiva||(cerrado?sigDia():etHoy());
 
-  const sesionActual=window._sesionActual||getSesionActualPorHora();
+  // Sesión según RESULTADO del día aplicado, no por hora (evita guardar 'noche' antes de tiempo)
+  try{await detectarSesionActiva();}catch{}
+  const sesionActual=window._sesionActual||'dia';
   if(!await hayInternet()){
     const rows=jugadas.map(j=>({fecha:fechaJ,cliente:cli,decena:j.dec,pick:j.pick,centena:'0',numero:j.dec+j.pick,monto:j.monto,hora,dia_cierre:null,sesion:sesionActual,recolector_id:getRecIdParaInsertar(),banquero_id:banqueroId||null}));
     await guardarEnCola(rows);
     return;
   }
 
-  // Con internet: usar fecha de registro activa o fecha normal
-  const rows=jugadas.map(j=>({fecha:fechaJ,cliente:cli,decena:j.dec,pick:j.pick,centena:'0',numero:j.dec+j.pick,monto:j.monto,hora,dia_cierre:null,sesion:sesionActual,recolector_id:getRecIdParaInsertar(),banquero_id:banqueroId||null}));
-  const {error}=await sb.from('jugadas').insert(rows);
-  if(error)throw error;
-  await sb.from('clientes').upsert({nombre:cli,ultimo:etHoy()});
+  // Con internet: el recolector inserta vía RPC con token (servidor fija banquero_id/recolector_id)
+  if(rol==='recolector'){
+    const payload=jugadas.map(j=>({dec:j.dec,pick:j.pick,monto:j.monto,hora}));
+    const {error}=await sb.schema('banca').rpc('recolector_insertar_jugadas',{
+      p_token:recToken,p_cliente:cli,p_fecha:fechaJ,p_sesion:sesionActual,p_jugadas:payload
+    });
+    if(error){if(_tokenMurio(error))return;throw error;}
+  }else{
+    const rows=jugadas.map(j=>({fecha:fechaJ,cliente:cli,decena:j.dec,pick:j.pick,centena:'0',numero:j.dec+j.pick,monto:j.monto,hora,dia_cierre:null,sesion:sesionActual,recolector_id:getRecIdParaInsertar(),banquero_id:banqueroId||null}));
+    const {error}=await sb.from('jugadas').insert(rows);
+    if(error)throw error;
+    await sb.from('clientes').upsert({nombre:cli,ultimo:etHoy()});
+  }
   // Pequeña espera para que Supabase confirme antes de loadJ
   await new Promise(r=>setTimeout(r,600));
 }
@@ -2044,7 +2088,9 @@ async function loadJ(){
   if(_dcbxElInit)_dcbxElInit.style.display='none';
   // Asegurar banqueroId cargado antes de verificar sesion cerrada
   if(rol==='admin'&&!banqueroId)await getBID();
-  const sesionActual=window._sesionActual||getSesionActualPorHora();
+  // Sesión según RESULTADO del día aplicado (no por hora fija): refrescamos la lógica correcta
+  try{await detectarSesionActiva();}catch{}
+  const sesionActual=window._sesionActual||'dia';
   let cerrado=false;
   try{cerrado=await isSesionCerrada(sesionActual);}catch{cerrado=false;}
   // Determinar si avanzar al día siguiente y qué mensaje mostrar
@@ -2052,7 +2098,8 @@ async function loadJ(){
   let dcbxMensaje=null; // {ico, titulo, sub}
   if(cerrado){
     const hayNoche=Object.values(_RC).some(r=>r.sesion_noche&&r.activo)
-      ||(rol==='recolector'&&(localStorage.getItem('b_rec_sesion_noche')==='true'));
+      ||(rol==='recolector'&&(localStorage.getItem('b_rec_sesion_noche')==='true'))
+      ||(rol==='admin'&&localStorage.getItem('b_hay_noche')==='1');
     const nocheAbierta=sesionActual==='dia'&&hayNoche&&!window._nocheOk;
     const ambasCerradas=window._diaOk&&window._nocheOk;
     if(nocheAbierta||(sesionActual==='noche'&&!window._nocheOk)){
@@ -2092,12 +2139,16 @@ async function loadJ(){
   // Jugadas de Supabase - consulta directa sin ping
   let jjRemote=[];
   try{
-    const bId=await getBID();
-    let qJ=sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).order('id',{ascending:true});
-    if(bId)qJ=qJ.eq('banquero_id',bId);
-    if(rol==='recolector'&&recId)qJ=qJ.eq('recolector_id',recId);
-    const {data}=await qJ;
-    jjRemote=data||[];
+    if(rol==='recolector'){
+      const {data,error}=await sb.schema('banca').rpc('recolector_jugadas_pendientes',{p_token:recToken,p_fecha:fecha});
+      if(error){_tokenMurio(error);}else{jjRemote=data||[];}
+    }else{
+      const bId=await getBID();
+      let qJ=sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).order('id',{ascending:true});
+      if(bId)qJ=qJ.eq('banquero_id',bId);
+      const {data}=await qJ;
+      jjRemote=data||[];
+    }
   }catch{}
   // Jugadas locales pendientes
   let jjLocal=[];
@@ -2134,7 +2185,7 @@ async function loadJ(){
       <div class="HH" onclick="togJG('${cid}')" style="padding:8px 12px;align-items:flex-start;">
         ${(ids.length&&rol==='admin')?`<input type="checkbox" class="JCK" data-ids="${ids.join(',')}" data-multi="1" onclick="event.stopPropagation();toggleGrupo(this)" style="margin-top:4px;">`:'' }
         <div style="flex:1;min-width:0;">
-          <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:14px;font-weight:700;color:var(--tx);">${cli}</span><span style="font-family:'Bebas Neue';font-size:18px;color:var(--vc);margin-right:6px;">${totalBloque.toFixed(2)} CUP</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:14px;font-weight:700;color:var(--tx);">${esc(cli)}</span><span style="font-family:'Bebas Neue';font-size:18px;color:var(--vc);margin-right:6px;">${totalBloque.toFixed(2)} CUP</span></div>
           <div style="font-size:9px;color:var(--t3);margin:2px 0;">${items.length} jugada${items.length>1?'s':''} · ${horaLabel}</div>
           <div style="margin-top:3px;line-height:1.6;">${pills}</div>
         </div>
@@ -2510,7 +2561,9 @@ async function fetchR(){
   const i=document.getElementById('FIC');
   if(b){b.classList.add('ld');b.disabled=true;}
   if(i)i.textContent='⌛';
-  const sesion=window._sesionActual||getSesionActualPorHora();
+  // Sesión según RESULTADO del día aplicado, no por hora (mismo patrón que loadJ/insertarJugadas)
+  try{await detectarSesionActiva();}catch{}
+  const sesion=window._sesionActual||'dia';
   try{
     const resultado=await buscarResultadoFlorida(sesion);
     if(resultado){
@@ -2544,7 +2597,7 @@ async function cargarInfoModoResultado(){
   if(rol!=='admin')return;
   // Refrescar sesión actual desde DB antes de mostrar
   await detectarSesionActiva();
-  const sesion=window._sesionActual||getSesionActualPorHora();
+  const sesion=window._sesionActual||'dia';
   const esNoche=sesion==='noche';
   const btnEl=document.getElementById('FBT');
   if(btnEl){
@@ -2630,7 +2683,9 @@ async function applyR(ns){
   if(!/^\d{3}$/.test(num))return toast('Número inválido',true);
   const pick=num.substring(1,3);
   const fecha=fechaResultadoActiva||etHoy();
-  const sesion=window._sesionActual||getSesionActualPorHora();
+  // Sesión según RESULTADO del día aplicado, no por hora (mismo patrón que loadJ/insertarJugadas)
+  try{await detectarSesionActiva();}catch{}
+  const sesion=window._sesionActual||'dia';
   // Filtrar jugadas de esta sesión que aún no tienen cierre
   let qJ=sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).eq('banquero_id',banqueroId);
   // Si la columna sesion existe, filtrar por ella
@@ -2675,12 +2730,14 @@ async function applyR(ns){
   showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierreAplicado,sesion);
   await actualizarSelectorFechas();
   await loadJ();
-  detectarSesionActiva();
+  await detectarSesionActiva();
 }
 
 async function loadResG(){
   const fecha=fechaResultadoActiva||etHoy();
-  const sesion=window._sesionActual||getSesionActualPorHora();
+  // Sesión según RESULTADO del día aplicado, no por hora (mismo patrón que loadJ/insertarJugadas)
+  try{await detectarSesionActiva();}catch{}
+  const sesion=window._sesionActual||'dia';
   // Si el día está completado (ambas sesiones cerradas) → mostrar resultado noche si existe
   if(sesion==='dia'&&window._diaOk&&window._nocheOk){
     const{data:resN}=await sb.from('resultados').select('*').eq('fecha',fecha).eq('sesion','noche').eq('banquero_id',banqueroId||'').maybeSingle();
@@ -2737,7 +2794,7 @@ function showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierre,sesion){
   document.getElementById('BRES').style.display='block';
   const gd=document.getElementById('LGAN');
   if(!gan.length){gd.innerHTML='<div class="EM"><span class="bg">😔</span>Nadie acertó hoy</div>';}
-  else{const ag={};gan.forEach(j=>{if(!ag[j.cliente])ag[j.cliente]=[];ag[j.cliente].push(j);});gd.innerHTML=Object.entries(ag).map(([n,arr])=>{const p=fx(arr.reduce((s,j)=>s+(parseFloat(j.monto)*PAGO),0));return'<div class="WI"><div><div class="WN">'+n+'</div><div class="WD">'+arr.map(j=>parseFloat(j.monto).toFixed(2)+' CUP · Pick '+j.pick).join(', ')+'</div></div><div class="WP">'+p.toFixed(2)+' CUP</div></div>';}).join('');}
+  else{const ag={};gan.forEach(j=>{if(!ag[j.cliente])ag[j.cliente]=[];ag[j.cliente].push(j);});gd.innerHTML=Object.entries(ag).map(([n,arr])=>{const p=fx(arr.reduce((s,j)=>s+(parseFloat(j.monto)*PAGO),0));return'<div class="WI"><div><div class="WN">'+esc(n)+'</div><div class="WD">'+arr.map(j=>parseFloat(j.monto).toFixed(2)+' CUP · Pick '+j.pick).join(', ')+'</div></div><div class="WP">'+p.toFixed(2)+' CUP</div></div>';}).join('');}
   // Desglose de comisión por recolector
   const recComLines=()=>{
     const porRec={};
@@ -2747,7 +2804,7 @@ function showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierre,sesion){
     });
     return Object.values(porRec).map(r=>{
       const c=fx(r.monto*(r.rate/100));
-      return '<div class="RR" style="padding-left:14px;font-size:11px;color:var(--t3);"><span>'+r.nombre+' ('+r.rate+'%)</span><span>'+c.toFixed(2)+' CUP</span></div>';
+      return '<div class="RR" style="padding-left:14px;font-size:11px;color:var(--t3);"><span>'+esc(r.nombre)+' ('+r.rate+'%)</span><span>'+c.toFixed(2)+' CUP</span></div>';
     }).join('');
   };
   document.getElementById('RFIN').innerHTML=
@@ -2804,7 +2861,9 @@ async function loadResR(){
   const myRecId=recId||localStorage.getItem('b_recid');
   const myRate=parseFloat(recCom||localStorage.getItem('b_reccom')||15);
   const hoy=etHoy();
-  const sesionActualR=window._sesionActual||getSesionActualPorHora();
+  // Sesión según RESULTADO del día aplicado, no por hora (espejo de loadGR)
+  try{await detectarSesionActiva();}catch{}
+  const sesionActualR=window._sesionActual||'dia';
   const {data:res}=await sb.from('resultados').select('*').eq('fecha',hoy).eq('sesion',sesionActualR).eq('banquero_id',banqueroId||'').maybeSingle();
   if(!res){
     const npd=document.getElementById('NPD');
@@ -2818,9 +2877,11 @@ async function loadResR(){
   }
   document.getElementById('NPD').style.display='none';document.getElementById('NRS').style.display='block';
   document.getElementById('NNM').textContent=res.numero;document.getElementById('NPK').textContent=res.pick;
-  // Comisión individual: solo jugadas de este recolector
-  const {data:jjs}=await sb.from('jugadas').select('*').eq('dia_cierre',hoy).eq('recolector_id',myRecId||'').eq('sesion',res.sesion);
-  const jj=jjs||[];const gan=jj.filter(j=>j.pick===res.pick);
+  // Comisión individual: solo jugadas de este recolector (vía RPC con token; el servidor filtra por recolector)
+  if(!recToken){document.getElementById('NRS').style.display='none';return;}
+  const {data:jjs,error:eJR}=await sb.schema('banca').rpc('recolector_jugadas_fecha',{p_token:recToken,p_fecha:hoy});
+  if(eJR){if(_tokenMurio(eJR))return;document.getElementById('NRS').style.display='none';return;}
+  const jj=(jjs||[]).filter(j=>j.dia_cierre===hoy&&j.sesion===res.sesion);const gan=jj.filter(j=>j.pick===res.pick);
   const recMio=fx(jj.reduce((s,j)=>s+parseFloat(j.monto),0));
   const comMia=fx(recMio*(myRate/100));
   document.getElementById('NCOM').textContent=comMia.toFixed(2)+' CUP';
@@ -2828,7 +2889,7 @@ async function loadResR(){
   const gd=document.getElementById('NGN');
   if(!gan.length){gd.innerHTML='<div class="EM"><span class="bg">😔</span>Nadie acertó hoy</div>';return;}
   const ag={};gan.forEach(j=>{if(!ag[j.cliente])ag[j.cliente]=[];ag[j.cliente].push(j);});
-  gd.innerHTML=Object.entries(ag).map(([n,arr])=>{const p=fx(arr.reduce((s,j)=>s+(parseFloat(j.monto)*PAGO),0));return'<div class="WI"><div><div class="WN">'+n+'</div><div class="WD">'+arr.map(j=>parseFloat(j.monto).toFixed(2)+' CUP').join(', ')+'</div></div><div class="WP">'+p.toFixed(2)+' CUP</div></div>';}).join('');
+  gd.innerHTML=Object.entries(ag).map(([n,arr])=>{const p=fx(arr.reduce((s,j)=>s+(parseFloat(j.monto)*PAGO),0));return'<div class="WI"><div><div class="WN">'+esc(n)+'</div><div class="WD">'+arr.map(j=>parseFloat(j.monto).toFixed(2)+' CUP').join(', ')+'</div></div><div class="WP">'+p.toFixed(2)+' CUP</div></div>';}).join('');
 }
 
 async function eliminarDiaCompleto(fecha){
@@ -2939,13 +3000,13 @@ async function togHistRec(did,cid,fecha,pick){
   const op=d.classList.toggle('op');if(c)c.classList.toggle('op',op);if(!op)return;
   if(d.querySelector('.HDJ'))return;
   d.innerHTML='<div style="font-size:11px;color:var(--t3);text-align:center;padding:8px;">⏳ Cargando...</div>';
-  const myRec=recId||localStorage.getItem('b_recid');
-  if(!myRec){d.innerHTML='<div style="font-size:11px;color:var(--rc);text-align:center;padding:8px;">Error: sin sesión</div>';return;}
-  const {data:jj}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('recolector_id',myRec).order('id',{ascending:true});
+  if(!recToken){d.innerHTML='<div style="font-size:11px;color:var(--rc);text-align:center;padding:8px;">Error: sin sesión</div>';return;}
+  const {data:jj,error:eJJ}=await sb.schema('banca').rpc('recolector_jugadas_dia',{p_token:recToken,p_fecha:fecha});
+  if(eJJ){if(_tokenMurio(eJJ))return;d.innerHTML='<div style="font-size:11px;color:var(--rc);text-align:center;padding:8px;">Error al cargar</div>';return;}
   const jDia=jj||[];
   const ganadores=jDia.filter(j=>j.pick===pick);
   const resto=jDia.filter(j=>j.pick!==pick);
-  const fmtJ=(j,esG)=>'<div class="HDJ'+(esG?' gan':'')+'"><span class="hpk">'+j.pick+'</span><span class="hcl">'+j.cliente+'</span><div style="text-align:right;"><div class="hmn">'+parseFloat(j.monto).toFixed(2)+' CUP</div>'+(esG?'<div class="hpr" style="color:var(--vc);">Ganó: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>':'<div class="hpr">Premio: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>')+'</div></div>';
+  const fmtJ=(j,esG)=>'<div class="HDJ'+(esG?' gan':'')+'"><span class="hpk">'+j.pick+'</span><span class="hcl">'+esc(j.cliente)+'</span><div style="text-align:right;"><div class="hmn">'+parseFloat(j.monto).toFixed(2)+' CUP</div>'+(esG?'<div class="hpr" style="color:var(--vc);">Ganó: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>':'<div class="hpr">Premio: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>')+'</div></div>';
   const secG=ganadores.length?'<div style="background:rgba(26,122,74,.12);border-radius:6px;margin-bottom:6px;padding:4px 6px;"><div style="font-size:9px;font-weight:700;letter-spacing:1px;color:var(--vc);text-transform:uppercase;padding:4px 2px 6px;">🏆 Ganadores · Pick '+pick+'</div>'+ganadores.map(j=>fmtJ(j,true)).join('')+'</div>':'';
   const secR='<div style="padding:4px 6px;"><div style="font-size:9px;font-weight:700;letter-spacing:1px;color:var(--t3);text-transform:uppercase;padding:4px 2px 6px;">Todas las jugadas ('+jDia.length+')</div>'+resto.map(j=>fmtJ(j,false)).join('')+'</div>';
   d.innerHTML=jDia.length?(secG+secR):'<div style="font-size:11px;color:var(--t3);text-align:center;padding:8px;">Sin jugadas</div>';
@@ -2979,13 +3040,13 @@ async function togHist(did,cid,fecha,pick){
     if(!grupos[key])grupos[key]=[];
     grupos[key].push(j);
   });
-  const fmtJ=(j,esG)=>'<div class="HDJ'+(esG?' gan':'')+'"><span class="hpk">'+j.pick+'</span><span class="hcl">'+j.cliente+'</span><div style="text-align:right;"><div class="hmn">'+parseFloat(j.monto).toFixed(2)+' CUP</div>'+(esG?'<div class="hpr" style="color:var(--vc);">Ganó: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>':'<div class="hpr">Premio: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>')+'</div></div>';
+  const fmtJ=(j,esG)=>'<div class="HDJ'+(esG?' gan':'')+'"><span class="hpk">'+j.pick+'</span><span class="hcl">'+esc(j.cliente)+'</span><div style="text-align:right;"><div class="hmn">'+parseFloat(j.monto).toFixed(2)+' CUP</div>'+(esG?'<div class="hpr" style="color:var(--vc);">Ganó: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>':'<div class="hpr">Premio: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>')+'</div></div>';
   // Ganadores globales
   const ganadores=jDia.filter(j=>j.pick===pick);
   const secG=ganadores.length?'<div style="background:rgba(26,122,74,.12);border-radius:6px;margin-bottom:8px;padding:4px 6px;"><div style="font-size:9px;font-weight:700;letter-spacing:1px;color:var(--vc);text-transform:uppercase;padding:4px 2px 6px;">🏆 Ganadores · Pick '+pick+'</div>'+ganadores.map(j=>fmtJ(j,true)).join('')+'</div>':'';
   // Secciones por recolector
   const secRecs=Object.entries(grupos).map(([rid,jjs])=>{
-    const nombre=rid==='admin'?'👑 Admin (Banquero)':('📋 '+(recMap[rid]||rid.substring(0,8)+'...'));
+    const nombre=rid==='admin'?'👑 Admin (Banquero)':('📋 '+esc(recMap[rid]||rid.substring(0,8)+'...'));
     const recTotal=fx(jjs.reduce((s,j)=>s+parseFloat(j.monto),0));
     const gid='rg-'+fecha.replace(/-/g,'')+'-'+rid.substring(0,8);
     const jugadasHTML=jjs.map(j=>fmtJ(j,j.pick===pick)).join('');
@@ -3024,14 +3085,16 @@ async function loadGR(){
   const myRec=recId||localStorage.getItem('b_recid');
   const myComP=parseFloat(localStorage.getItem('b_reccom')||recCom||15);
   const hoy=etHoy();
-  const sesionActual=window._sesionActual||getSesionActualPorHora();
+  // Sesión según RESULTADO del día aplicado, no por hora (mismo patrón que loadJ/insertarJugadas)
+  try{await detectarSesionActiva();}catch{}
+  const sesionActual=window._sesionActual||'dia';
 
   // Stats de hoy — incluir jugadas pendientes Y las ya cerradas de hoy
   let jjHoy=[];
-  if(myRec){
-    const {data:jh}=await sb.from('jugadas').select('monto,pick,dia_cierre,sesion')
-      .eq('fecha',hoy).eq('recolector_id',myRec);
-    jjHoy=jh||[];
+  if(myRec&&recToken){
+    const {data:jh,error:eGH}=await sb.schema('banca').rpc('recolector_jugadas_fecha',{p_token:recToken,p_fecha:hoy});
+    if(eGH&&_tokenMurio(eGH))return;
+    jjHoy=(jh||[]).filter(j=>j.fecha===hoy);
   }
   // Jugadas pendientes (sesión actual)
   const jjPend=jjHoy.filter(j=>!j.dia_cierre);
@@ -3101,7 +3164,7 @@ async function loadGR(){
   if(!itemsJugadas.length&&!itemsManuales.length){div.innerHTML='<div class="EM"><span class="bg">💰</span>Sin registros aún</div>';return;}
   div.innerHTML=
     itemsJugadas.map(r=>'<div class="RGI"><div style="flex:1;"><div class="GF">'+r.f+(r.sesionBadge||'')+' · N° '+r.numero+'</div><div class="GD">Rec: '+r.rec.toFixed(2)+' · Prem: '+r.prem.toFixed(2)+' CUP</div></div><div style="text-align:right;margin-right:8px;"><div class="GV p">+'+r.com.toFixed(2)+' CUP</div><div class="GA">Acum: +'+r.acum.toFixed(2)+'</div></div></div>').join('')
-    +itemsManuales.map(r=>'<div class="RGI"><div style="flex:1;"><div class="GF">'+r.f+' <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(201,162,39,.2);color:var(--dc);">📋 Acumulado previo</span></div><div class="GD">'+r.nota+'</div></div><div style="text-align:right;margin-right:8px;"><div class="GV p">+'+r.com.toFixed(2)+' CUP</div></div></div>').join('');
+    +itemsManuales.map(r=>'<div class="RGI"><div style="flex:1;"><div class="GF">'+r.f+' <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(201,162,39,.2);color:var(--dc);">📋 Acumulado previo</span></div><div class="GD">'+esc(r.nota)+'</div></div><div style="text-align:right;margin-right:8px;"><div class="GV p">+'+r.com.toFixed(2)+' CUP</div></div></div>').join('');
 }
 
 async function addGR(){
@@ -3177,8 +3240,8 @@ function renderRecCard(r){
     :'';
   return '<div class="RGI" id="rcard-'+r.id+'" data-id="'+r.id+'">'
     +'<div style="flex:1;">'
-    +'<div style="font-weight:700;font-size:14px;color:var(--tx);">'+(r.nombre||r.username)+'</div>'
-    +'<div style="font-size:10px;color:var(--t3);margin-top:2px;">@'+r.username
+    +'<div style="font-weight:700;font-size:14px;color:var(--tx);">'+esc(r.nombre||r.username)+'</div>'
+    +'<div style="font-size:10px;color:var(--t3);margin-top:2px;">@'+esc(r.username)
     +' &nbsp;·&nbsp; Com: <span style="color:var(--d);">'+r.comision+'%</span>'
     +' &nbsp;·&nbsp; <span style="'+color+'">'+estado+'</span>'
     +nocheBadge
@@ -3384,7 +3447,7 @@ async function loadHistorialComision(recId){
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'+
         '<div>'+
           '<div style="font-size:12px;font-weight:700;color:var(--tx);">'+fmtFecha+' <span style="font-size:10px;color:var(--t3);font-weight:400;">'+fmtHora+'</span></div>'+
-          (h.nota?'<div style="font-size:10px;color:var(--t3);margin-top:2px;">'+h.nota+'</div>':'')+'</div>'+
+          (h.nota?'<div style="font-size:10px;color:var(--t3);margin-top:2px;">'+esc(h.nota)+'</div>':'')+'</div>'+
         '<div style="text-align:right;white-space:nowrap;">'+
           '<div style="font-family:\'Bebas Neue\';font-size:17px;color:'+color+';">'+flecha+' '+h.comision_anterior+'% → '+h.comision_nueva+'%</div>'+
           '<div style="font-size:9px;color:var(--t3);">'+Math.abs(h.comision_nueva-h.comision_anterior).toFixed(1)+' pp '+(subio?'más':'menos')+'</div>'+
@@ -3453,7 +3516,7 @@ async function refrescarWallet(id){
     const color=esE?'var(--vc)':'var(--dc)';
     const signo=esE?'↑ -':'↓ +';
     const label=esE?'Entrega':'Recarga';
-    return '<div class="RGI" style="margin-bottom:4px;"><div style="flex:1;"><div style="font-size:12px;font-weight:600;color:var(--tx);">'+f+' <span style="font-size:9px;color:'+color+';">'+label+'</span></div><div style="font-size:10px;color:var(--t3);">'+(m.nota||'Sin nota')+'</div></div><div style="text-align:right;"><div style="font-size:13px;font-weight:700;color:'+color+';">'+signo+parseFloat(m.monto).toFixed(2)+' CUP</div></div></div>';
+    return '<div class="RGI" style="margin-bottom:4px;"><div style="flex:1;"><div style="font-size:12px;font-weight:600;color:var(--tx);">'+f+' <span style="font-size:9px;color:'+color+';">'+label+'</span></div><div style="font-size:10px;color:var(--t3);">'+esc(m.nota||'Sin nota')+'</div></div><div style="text-align:right;"><div style="font-size:13px;font-weight:700;color:'+color+';">'+signo+parseFloat(m.monto).toFixed(2)+' CUP</div></div></div>';
   }).join('');
   // Update card saldo
   const el=document.getElementById('wsaldo-'+id);
@@ -3624,7 +3687,7 @@ async function loadResumen(){
     return '<div class="RGI" style="flex-direction:column;align-items:stretch;gap:6px;" data-id="'+r.id+'">'
       +'<div style="display:flex;align-items:center;justify-content:space-between;">'
       +'<div>'
-      +'<div style="font-weight:700;font-size:14px;color:var(--tx);">'+(r.nombre||r.username)+'</div>'
+      +'<div style="font-weight:700;font-size:14px;color:var(--tx);">'+esc(r.nombre||r.username)+'</div>'
       +'<div style="font-size:10px;color:var(--t3);">Com: <span style="color:var(--d);">'+r.comision+'%</span> · <span style="color:'+colorEstado+';">'+estado+'</span>'+(r.sesion_noche?' · <span style="color:#c8b4ff;">🌙 Noche</span>':'')+'</div>'
       +'</div>'
       +'<button class="RGD" style="border-color:rgba(52,168,83,.5);color:var(--vc);" onclick="abrirWalletCard(this)">Wallet</button>'
@@ -3667,7 +3730,7 @@ async function loadResumen(){
     const f=new Date(+y,+m-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
     const porRec=jj7Map[fecha]||{};
     const recRows=Object.entries(porRec).map(([rid,monto])=>{
-      const nombre=rid==='admin'?'Admin':(recMap[rid]?.nombre||recMap[rid]?.username||rid.substring(0,6));
+      const nombre=rid==='admin'?'Admin':esc(recMap[rid]?.nombre||recMap[rid]?.username||rid.substring(0,6));
       return '<span style="font-size:9px;background:var(--b3);border-radius:4px;padding:2px 5px;margin-right:4px;">'+nombre+': <b style="color:var(--dc);">'+monto.toFixed(0)+'</b></span>';
     }).join('');
     const sesRows=sesiones.length>1?sesiones.map(r=>{
@@ -3802,7 +3865,7 @@ async function loadAuditoria(){
     const f=dt.toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'})+' '+dt.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
     const icono=iconos[a.accion]||'•';
     const label=labels[a.accion]||a.accion.replace(/_/g,' ');
-    const det=a.detalle?Object.entries(a.detalle).filter(([k])=>!['banquero_id','recolector_id'].includes(k)).map(([k,v])=>'<span style="color:var(--t2);font-weight:600;">'+k+':</span> '+v).join('<br>'):'';
+    const det=a.detalle?Object.entries(a.detalle).filter(([k])=>!['banquero_id','recolector_id'].includes(k)).map(([k,v])=>'<span style="color:var(--t2);font-weight:600;">'+esc(k)+':</span> '+esc(typeof v==='object'?JSON.stringify(v):v)).join('<br>'):'';
     const isWarn=a.accion.includes('BORRAR')||a.accion.includes('ELIMINAR')||a.accion.includes('REVERTIR');
     const isPass=a.accion.includes('PASSWORD');
     const detColor=isWarn?'rgba(231,76,60,.08)':isPass?'rgba(96,168,240,.06)':'rgba(201,162,39,.04)';
@@ -3949,6 +4012,7 @@ async function descartarHuerfanasPostCierre(fecha){
 }
 
 async function verificarHuerfanas(){
+  if(rol!=='admin')return;
   const hoy=etHoy();
   const {data}=await sb.from('jugadas').select('fecha,cliente,monto').is('dia_cierre',null).lt('fecha',hoy);
   if(!data||!data.length)return;
@@ -3975,18 +4039,25 @@ function getRecIdParaInsertar(){
 // ── CARGAR RECOLECTORES PARA SELECTOR DE REGISTRO (admin) ──
 async function cargarRecsParaRegistro(){
   const sel=document.getElementById('SEL-REC-ADM');
-  if(!sel)return;
-  // Limpiar opciones anteriores (excepto la de admin)
-  while(sel.options.length>1)sel.remove(1);
+  // Limpiar opciones anteriores (excepto la de admin) si el select existe
+  if(sel){while(sel.options.length>1)sel.remove(1);}
   try{
     const bId=await getBID();
-    const {data}=await sb.schema('banca').from('recolectores').select('id,nombre,username,activo').eq('banquero_id',bId).eq('activo',true).order('nombre');
+    // Traer sesion_noche para que _RC sea fuente confiable de "hay noche" (lo usan detectarSesionActiva/loadJ)
+    const {data}=await sb.schema('banca').from('recolectores').select('id,nombre,username,activo,sesion_noche').eq('banquero_id',bId).eq('activo',true).order('nombre');
+    let hayNoche=false;
     (data||[]).forEach(r=>{
-      const opt=document.createElement('option');
-      opt.value=r.id;
-      opt.textContent='📋 '+(r.nombre||r.username);
-      sel.appendChild(opt);
+      _RC[r.id]=r;
+      if(r.sesion_noche&&r.activo)hayNoche=true;
+      if(sel){
+        const opt=document.createElement('option');
+        opt.value=r.id;
+        opt.textContent='📋 '+(r.nombre||r.username);
+        sel.appendChild(opt);
+      }
     });
+    // Cache persistente para que el admin reactive noche aun antes de que _RC cargue (cross-reload)
+    try{localStorage.setItem('b_hay_noche',hayNoche?'1':'0');}catch{}
   }catch(e){console.warn('Error cargando recolectores para registro',e);}
 }
 
@@ -4356,7 +4427,8 @@ async function detectarSesionActiva(){
   const hoy=etHoy();
   const[diaOk,nocheOk]=await Promise.all([isSesionCerrada('dia'),isSesionCerrada('noche')]);
   const hayNoche=Object.values(_RC).some(r=>r.sesion_noche&&r.activo)
-    ||(rol==='recolector'&&localStorage.getItem('b_rec_sesion_noche')==='true');
+    ||(rol==='recolector'&&localStorage.getItem('b_rec_sesion_noche')==='true')
+    ||(rol==='admin'&&localStorage.getItem('b_hay_noche')==='1');
   const banner=document.getElementById('SESION-BANNER');
   if(!banner)return;
 
