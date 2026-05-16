@@ -655,11 +655,19 @@ textarea{resize:vertical;min-height:50px;}
       <div style="font-size:10px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Correo</div>
       <div id="AJ-email" style="font-size:14px;color:var(--tx);font-weight:600;">--</div>
     </div>
-    <label>Nombre de la banca</label>
-    <input type="text" id="AJ-nombre-banca" placeholder="Ej: Banca La Suerte...">
+    <label>Nombre del banquero</label>
+    <input type="text" id="AJ-nombre-banca" placeholder="Ej: Juan Pérez...">
     <label>Número de WhatsApp <span style="font-size:9px;color:var(--t3);">(con código de país, ej: 5355512345)</span></label>
     <input type="tel" id="AJ-whatsapp" placeholder="5355512345">
     <button class="BTN BP" style="margin-top:.75rem;font-size:15px;" onclick="guardarPerfilBanquero()">Guardar perfil</button>
+
+    <div style="border-top:1px solid var(--br);margin:1.1rem 0 .9rem;"></div>
+    <div style="font-size:13px;color:var(--tx);font-weight:600;margin-bottom:.6rem;">🔑 Cambiar contraseña</div>
+    <label>Nueva contraseña <span style="font-size:9px;color:var(--t3);">(mínimo 6 caracteres)</span></label>
+    <input type="password" id="AJ-pass-nueva" placeholder="Nueva contraseña..." autocomplete="new-password">
+    <label>Confirmar nueva contraseña</label>
+    <input type="password" id="AJ-pass-conf" placeholder="Repite la nueva contraseña..." autocomplete="new-password">
+    <button class="BTN BS" style="margin-top:.75rem;font-size:15px;" onclick="cambiarPassBanquero()">Cambiar contraseña</button>
   </div>
 
   <!-- RESULTADO -->
@@ -4413,11 +4421,14 @@ async function loadAjustes(){
   const email=sess?.session?.user?.email||'--';
   const ajEl=document.getElementById('AJ-email');
   if(ajEl)ajEl.textContent=email;
+  // Nombre del banquero (desde tabla banqueros, es el que se muestra en la sesión)
+  const{data:bq}=await sb.schema('banca').from('banqueros').select('nombre').eq('id',bId).maybeSingle();
+  const nbEl=document.getElementById('AJ-nombre-banca');
+  if(nbEl)nbEl.value=bq?.nombre||'';
   // Cargar ajustes guardados
   const{data}=await sb.from('banquero_ajustes').select('*').eq('banquero_id',bId).maybeSingle();
   if(data){
     _ajustesModoRes=data.modo_resultado||'manual';
-    const nb=document.getElementById('AJ-nombre-banca');if(nb)nb.value=data.nombre_banca||'';
     const wa=document.getElementById('AJ-whatsapp');if(wa)wa.value=data.whatsapp||'';
     const hd=document.getElementById('AJ-hora-dia');if(hd)hd.value=data.hora_cierre_dia||'13:50';
     const hn=document.getElementById('AJ-hora-noche');if(hn)hn.value=data.hora_cierre_noche||'22:00';
@@ -4481,13 +4492,37 @@ async function guardarPerfilBanquero(){
   const btn=event.currentTarget;
   const nombre=document.getElementById('AJ-nombre-banca')?.value.trim()||'';
   const wa=(document.getElementById('AJ-whatsapp')?.value.trim()||'').replace(/\D/g,'');
+  if(!nombre)return toast('Escribe el nombre del banquero',true);
   btn.textContent='Guardando...';btn.disabled=true;
+  const bId=await getBID();
+  // El nombre del banquero vive en la tabla banqueros (es el que se muestra en la sesión)
+  const{error:eNom}=await sb.schema('banca').from('banqueros').update({nombre}).eq('id',bId);
   const error=await _upsertAjustes({nombre_banca:nombre,whatsapp:wa});
   btn.textContent='Guardar perfil';btn.disabled=false;
+  if(eNom)return toast('Error al guardar: '+eNom.message,true);
   if(error)return toast('Error al guardar: '+error.message,true);
   const waEl=document.getElementById('AJ-whatsapp');
   if(waEl&&wa)waEl.value=wa;
+  // Reflejar el cambio en el nombre del usuario logueado
+  const bgx=document.getElementById('RBGX');
+  if(bgx&&rol==='admin')bgx.textContent='🏦 '+nombre.toUpperCase();
   toast('✓ Perfil guardado');
+}
+
+async function cambiarPassBanquero(){
+  const btn=event.currentTarget;
+  const nueva=document.getElementById('AJ-pass-nueva')?.value||'';
+  const conf=document.getElementById('AJ-pass-conf')?.value||'';
+  if(nueva.length<6)return toast('La contraseña debe tener al menos 6 caracteres',true);
+  if(nueva!==conf)return toast('Las contraseñas no coinciden',true);
+  btn.textContent='Cambiando...';btn.disabled=true;
+  const{error}=await sb.auth.updateUser({password:nueva});
+  btn.textContent='Cambiar contraseña';btn.disabled=false;
+  if(error)return toast('Error: '+error.message,true);
+  document.getElementById('AJ-pass-nueva').value='';
+  document.getElementById('AJ-pass-conf').value='';
+  audit('CAMBIO_PASSWORD',{rol:'banquero'});
+  toast('✓ Contraseña cambiada correctamente');
 }
 
 async function guardarModoResultado(){
