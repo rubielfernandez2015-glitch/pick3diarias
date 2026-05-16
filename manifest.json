@@ -1,0 +1,26 @@
+{
+  "name": "La Bolita Plus · Pick 3",
+  "short_name": "La Bolita",
+  "description": "Sistema de recolección Florida Pick 3",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a1f12",
+  "theme_color": "#c9a227",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "productivity"],
+  "lang": "es"
+}
