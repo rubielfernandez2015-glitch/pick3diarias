@@ -545,7 +545,7 @@ textarea{resize:vertical;min-height:50px;}
       <div id="ALERTA-LISTA" style="display:none;border-top:1px solid rgba(255,255,255,.1);padding:10px 13px;font-size:11px;color:#f0ead6;line-height:1.8;"></div>
     </div>
     <div class="CD">
-      <div class="CT"><span><span class="SD"></span>Jugadas Pendientes</span><span style="font-size:10px;font-family:Syne;color:var(--t3);">Tiempo real</span></div>
+      <div class="CT"><span><span class="SD"></span>Jugadas Pendientes<span id="JL-SES"></span></span><span style="font-size:10px;font-family:Syne;color:var(--t3);">Tiempo real</span></div>
       <div id="DCBX" style="display:none;" class="DCB">
         <span id="DCBX-ICO" style="font-size:22px;">🔒</span>
         <div style="font-size:12px;color:var(--dc);"><strong id="DCBX-TITLE" style="display:block;font-family:'Bebas Neue';font-size:15px;letter-spacing:1px;">Día Cerrado</strong><span id="DCBX-SUB">Nuevas jugadas van a la próxima tirada</span></div>
@@ -2091,6 +2091,9 @@ async function loadJ(){
   // Sesión según RESULTADO del día aplicado (no por hora fija): refrescamos la lógica correcta
   try{await detectarSesionActiva();}catch{}
   const sesionActual=window._sesionActual||'dia';
+  // Rotular la sesión a la que van las jugadas pendientes (🌅 Día / 🌙 Noche)
+  const _jlSes=document.getElementById('JL-SES');
+  if(_jlSes){const _esN=sesionActual==='noche';_jlSes.innerHTML=' <span style="font-size:9px;color:'+(_esN?'#c8b4ff':'#ffd369')+';font-weight:700;background:'+(_esN?'rgba(200,180,255,.15)':'rgba(255,211,105,.12)')+';padding:1px 6px;border-radius:4px;">'+(_esN?'🌙 Noche':'🌅 Día')+'</span>';}
   let cerrado=false;
   try{cerrado=await isSesionCerrada(sesionActual);}catch{cerrado=false;}
   // Determinar si avanzar al día siguiente y qué mensaje mostrar
@@ -2522,6 +2525,15 @@ async function recalcFondo(){
 }
 
 let fechaResultadoActiva=null;
+let sesionResultadoActiva=null; // sesión del pendiente huérfano seleccionado (null = flujo de hoy)
+function _esFechaOrfana(){return !!(fechaResultadoActiva&&fechaResultadoActiva!==etHoy()&&sesionResultadoActiva);}
+// Sesión a usar para buscar/aplicar/mostrar: si es un huérfano seleccionado, su propia sesión;
+// si es hoy, la que deriva del resultado aplicado (detectarSesionActiva)
+async function _sesionResultadoEfectiva(){
+  if(_esFechaOrfana())return sesionResultadoActiva;
+  try{await detectarSesionActiva();}catch{}
+  return window._sesionActual||'dia';
+}
 async function vistaR(){
   if(rol==='admin'){document.getElementById('VA').style.display='block';document.getElementById('VR').style.display='none';await actualizarSelectorFechas();await loadResG();}
   else{document.getElementById('VA').style.display='none';document.getElementById('VR').style.display='block';await loadResR();}
@@ -2530,29 +2542,35 @@ async function vistaR(){
 async function actualizarSelectorFechas(){
   const hoy=etHoy();
   const bIdSF=await getBID();
-  const qHuerfSF=sb.from('jugadas').select('fecha').is('dia_cierre',null).lt('fecha',hoy);
+  const qHuerfSF=sb.from('jugadas').select('fecha,sesion').is('dia_cierre',null).lt('fecha',hoy);
   const {data:huerfanas}=await (bIdSF?qHuerfSF.eq('banquero_id',bIdSF):qHuerfSF);
   const wrap=document.getElementById('RES-fecha-wrap'),sel=document.getElementById('RES-fecha-sel'),label=document.getElementById('RES-fecha-label');
-  const fechasH=[...new Set((huerfanas||[]).map(j=>j.fecha))].sort();
-  if(fechasH.length>0){
+  // Agrupar por (fecha, sesion) para que el pendiente NO mezcle Día y Noche
+  const paresH=[...new Set((huerfanas||[]).map(j=>j.fecha+'|'+(j.sesion||'dia')))].sort();
+  if(paresH.length>0){
     wrap.style.display='block';
-    sel.innerHTML=[...fechasH.map(f=>`<option value="${f}">⚠️ ${fmtF(f)} (sin cerrar)</option>`),`<option value="${hoy}">Hoy · ${fmtF(hoy)}</option>`].join('');
-    if(!fechaResultadoActiva||fechaResultadoActiva===hoy){fechaResultadoActiva=fechasH[0];sel.value=fechaResultadoActiva;}
-    else sel.value=fechaResultadoActiva;
-  }else{wrap.style.display='none';fechaResultadoActiva=hoy;}
+    sel.innerHTML=[...paresH.map(p=>{const[f,s]=p.split('|');const sl=s==='noche'?'NOCHE 🌙':'DÍA 🌅';return `<option value="${f}|${s}">⚠️ ${fmtF(f)} · ${sl} (sin cerrar)</option>`;}),`<option value="${hoy}|">Hoy · ${fmtF(hoy)}</option>`].join('');
+    if(!fechaResultadoActiva||fechaResultadoActiva===hoy){const[f0,s0]=paresH[0].split('|');fechaResultadoActiva=f0;sesionResultadoActiva=s0;sel.value=f0+'|'+s0;}
+    else sel.value=fechaResultadoActiva+'|'+(sesionResultadoActiva||'');
+  }else{wrap.style.display='none';fechaResultadoActiva=hoy;sesionResultadoActiva=null;}
   const esHoy=fechaResultadoActiva===hoy;
   label.textContent=esHoy?'':'· '+fmtF(fechaResultadoActiva);
   label.style.color=esHoy?'var(--t3)':'var(--rc)';
 }
 
 function cambiarFechaResultado(){
-  fechaResultadoActiva=document.getElementById('RES-fecha-sel').value;
+  const raw=document.getElementById('RES-fecha-sel').value;
+  const [f,s]=raw.split('|');
+  fechaResultadoActiva=f;
+  sesionResultadoActiva=(s&&f!==etHoy())?s:null;
   const hoy=etHoy(),label=document.getElementById('RES-fecha-label');
   const esHoy=fechaResultadoActiva===hoy;
-  label.textContent=esHoy?'':'· '+fmtF(fechaResultadoActiva);
+  const sl=sesionResultadoActiva?(sesionResultadoActiva==='noche'?' · NOCHE':' · DÍA'):'';
+  label.textContent=esHoy?'':'· '+fmtF(fechaResultadoActiva)+sl;
   label.style.color=esHoy?'var(--t3)':'var(--rc)';
   document.getElementById('BRES').style.display='none';
   document.getElementById('IRES').value='';
+  cargarInfoModoResultado();
   loadResG();
 }
 
@@ -2561,9 +2579,8 @@ async function fetchR(){
   const i=document.getElementById('FIC');
   if(b){b.classList.add('ld');b.disabled=true;}
   if(i)i.textContent='⌛';
-  // Sesión según RESULTADO del día aplicado, no por hora (mismo patrón que loadJ/insertarJugadas)
-  try{await detectarSesionActiva();}catch{}
-  const sesion=window._sesionActual||'dia';
+  // Sesión efectiva: si hay un huérfano seleccionado, su sesión; si no, la de hoy
+  const sesion=await _sesionResultadoEfectiva();
   try{
     const resultado=await buscarResultadoFlorida(sesion);
     if(resultado){
@@ -2595,9 +2612,8 @@ async function buscarResultadoFlorida(sesion='dia'){
 
 async function cargarInfoModoResultado(){
   if(rol!=='admin')return;
-  // Refrescar sesión actual desde DB antes de mostrar
-  await detectarSesionActiva();
-  const sesion=window._sesionActual||'dia';
+  // Sesión efectiva: la del huérfano seleccionado, o la de hoy
+  const sesion=await _sesionResultadoEfectiva();
   const esNoche=sesion==='noche';
   const btnEl=document.getElementById('FBT');
   if(btnEl){
@@ -2683,17 +2699,15 @@ async function applyR(ns){
   if(!/^\d{3}$/.test(num))return toast('Número inválido',true);
   const pick=num.substring(1,3);
   const fecha=fechaResultadoActiva||etHoy();
-  // Sesión según RESULTADO del día aplicado, no por hora (mismo patrón que loadJ/insertarJugadas)
-  try{await detectarSesionActiva();}catch{}
-  const sesion=window._sesionActual||'dia';
+  // Sesión efectiva: la del huérfano seleccionado, o la de hoy (deriva del resultado aplicado)
+  const esOrfano=_esFechaOrfana();
+  const sesion=await _sesionResultadoEfectiva();
   // Filtrar jugadas de esta sesión que aún no tienen cierre
-  let qJ=sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).eq('banquero_id',banqueroId);
-  // Si la columna sesion existe, filtrar por ella
-  qJ=qJ.eq('sesion',sesion);
-  const{data:jjPend}=await qJ;
-  // Si no hay jugadas con sesion tag (datos viejos), tomar todas las pendientes
+  const{data:jjPend}=await sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).eq('banquero_id',banqueroId).eq('sesion',sesion);
   let jj=jjPend||[];
-  if(!jj.length){
+  // Fallback datos viejos sin tag de sesión: SOLO en flujo de hoy. En un huérfano con sesión
+  // explícita NO se hace, para no arrastrar las jugadas de la otra sesión.
+  if(!jj.length&&!esOrfano){
     const{data:jjAll}=await sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).eq('banquero_id',banqueroId);
     jj=jjAll||[];
   }
@@ -2735,11 +2749,12 @@ async function applyR(ns){
 
 async function loadResG(){
   const fecha=fechaResultadoActiva||etHoy();
-  // Sesión según RESULTADO del día aplicado, no por hora (mismo patrón que loadJ/insertarJugadas)
-  try{await detectarSesionActiva();}catch{}
-  const sesion=window._sesionActual||'dia';
+  // Sesión efectiva: la del huérfano seleccionado, o la de hoy
+  const esOrfano=_esFechaOrfana();
+  const sesion=await _sesionResultadoEfectiva();
   // Si el día está completado (ambas sesiones cerradas) → mostrar resultado noche si existe
-  if(sesion==='dia'&&window._diaOk&&window._nocheOk){
+  // (heurística SOLO para hoy; en un huérfano no aplica y no debe precargar el número del día)
+  if(!esOrfano&&sesion==='dia'&&window._diaOk&&window._nocheOk){
     const{data:resN}=await sb.from('resultados').select('*').eq('fecha',fecha).eq('sesion','noche').eq('banquero_id',banqueroId||'').maybeSingle();
     if(resN){
       document.getElementById('IRES').value=resN.numero;
@@ -2768,7 +2783,8 @@ async function loadResG(){
   // No hay resultado de la sesión actual
   if(sesion==='noche'){
     // En sesión noche: mostrar resultado del día hasta las 2:30 PM, luego limpiar
-    if(mins<=limite230){
+    // (en un huérfano NO: no debe precargar el número del Día sobre un pendiente de Noche)
+    if(!esOrfano&&mins<=limite230){
       const{data:resD}=await sb.from('resultados').select('*').eq('fecha',fecha).eq('sesion','dia').eq('banquero_id',banqueroId||'').maybeSingle();
       if(resD){
         document.getElementById('IRES').value='';
@@ -2913,34 +2929,45 @@ async function loadHist(){
     // Obtener sesión de cada cierre para mostrar badge 🌅 Día / 🌙 Noche
     // Nota: no filtramos por banquero_id para evitar fallos de timing; RLS protege los datos
     const fechasHistR=rows.map(r=>r.dia_cierre);
-    let sesionMapHistR={};
+    // fecha -> [{sesion,numero}] de AMBAS sesiones (el RPC agrega por día; aquí mostramos los 2 números)
+    let numsPorFechaR={};
     try{
       if(fechasHistR.length){
         const bIdHR=banqueroId||localStorage.getItem('b_recbid')||'';
         const qSesHR=bIdHR
-          ?sb.from('resultados').select('fecha,sesion').in('fecha',fechasHistR).eq('banquero_id',bIdHR)
-          :sb.from('resultados').select('fecha,sesion').in('fecha',fechasHistR);
+          ?sb.from('resultados').select('fecha,sesion,numero').in('fecha',fechasHistR).eq('banquero_id',bIdHR)
+          :sb.from('resultados').select('fecha,sesion,numero').in('fecha',fechasHistR);
         const{data:sesHistR}=await qSesHR;
-        (sesHistR||[]).forEach(s=>{if(!sesionMapHistR[s.fecha])sesionMapHistR[s.fecha]=s.sesion;});
+        (sesHistR||[]).forEach(s=>{(numsPorFechaR[s.fecha]=numsPorFechaR[s.fecha]||[]).push({sesion:s.sesion||'dia',numero:s.numero});});
       }
-    }catch(e){console.warn('sesionMapHistR:',e);}
-    div.innerHTML=rows.map(r=>{
-      const rec=fx(parseFloat(r.total_rec||0));
-      const prem=fx(parseFloat(r.total_prem||0));
+    }catch(e){console.warn('numsPorFechaR:',e);}
+    // El RPC devuelve UNA fila por cierre y repite total_rec/total_jugadas/comisión del DÍA en
+    // cada fila (solo total_prem es por sesión). Por eso colapsamos a UNA fila por día, como admin:
+    // rec/jugadas = del día (una fila), premios = suma de las sesiones, detalle desplegado = por sesión.
+    const porDiaR={};
+    rows.forEach(r=>{(porDiaR[r.dia_cierre]=porDiaR[r.dia_cierre]||[]).push(r);});
+    const badgeSes=s=>s==='noche'
+      ?'<span style="font-size:9px;color:#c8b4ff;font-weight:700;background:rgba(200,180,255,.15);padding:1px 5px;border-radius:4px;margin-left:4px;">🌙 Noche</span>'
+      :'<span style="font-size:9px;color:#ffd369;font-weight:700;background:rgba(255,211,105,.12);padding:1px 5px;border-radius:4px;margin-left:4px;">🌅 Día</span>';
+    div.innerHTML=Object.keys(porDiaR).sort((a,b)=>b.localeCompare(a)).map(fecha=>{
+      const fr=porDiaR[fecha];
+      const rec=fx(parseFloat(fr[0].total_rec||0));// día (repetido por fila) → tomar una
+      const prem=fx(fr.reduce((s,x)=>s+parseFloat(x.total_prem||0),0));// premios por sesión → sumar
       const comI=fx(rec*(com/100));
-      const pick=r.pick_ganador||'';
-      const fecha=r.dia_cierre;
+      const totJug=fr[0].total_jugadas;
       const fid=fecha.replace(/-/g,'');
       const [y,m,d]=fecha.split('-');
       const fd=new Date(+y,+m-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
-      const sesTagR=sesionMapHistR[fecha]||'dia';
-      const sesBadgeR=sesTagR==='noche'
-        ?'<span style="font-size:9px;color:#c8b4ff;font-weight:700;background:rgba(200,180,255,.15);padding:1px 5px;border-radius:4px;margin-left:4px;">🌙 Noche</span>'
-        :'<span style="font-size:9px;color:#ffd369;font-weight:700;background:rgba(255,211,105,.12);padding:1px 5px;border-radius:4px;margin-left:4px;">🌅 Día</span>';
-      return '<div class="HI" data-fecha="'+fecha+'" data-pick="'+pick+'"><div class="HH" onclick="togHistRecEl(this)">'
-        +'<div style="flex:1;"><div class="HFE">'+fd+sesBadgeR+' <span style="font-size:10px;color:var(--t3);">('+r.total_jugadas+' jugadas)</span></div>'
+      // Sesiones del día (orden día→noche) con su número
+      const sesArr=(numsPorFechaR[fecha]||[]).slice().sort((a,b)=>a.sesion==='dia'?-1:(b.sesion==='dia'?1:0));
+      const numsDisp=sesArr.length
+        ?sesArr.map(s=>(s.sesion==='noche'?'🌙':'🌅')+s.numero).join(' · ')
+        :(fr.map(r=>r.numero_ganador).filter(Boolean).join(' · ')||'--');
+      const badges=sesArr.length?sesArr.map(s=>badgeSes(s.sesion)).join(''):'';
+      return '<div class="HI" data-fecha="'+fecha+'" data-pick=""><div class="HH" onclick="togHistRecEl(this)">'
+        +'<div style="flex:1;"><div class="HFE">'+fd+badges+' <span style="font-size:10px;color:var(--t3);">('+totJug+' jugadas)</span></div>'
         +'<div class="HME">Rec: '+rec.toFixed(2)+' · Prem: '+prem.toFixed(2)+' · Com: '+comI.toFixed(2)+' CUP</div></div>'
-        +'<div style="text-align:right;margin-right:6px;"><div class="HNU">'+(r.numero_ganador||'--')+'</div>'
+        +'<div style="text-align:right;margin-right:6px;"><div class="HNU" style="font-size:13px;">'+numsDisp+'</div>'
         +'<span class="BDG BG">+'+comI.toFixed(2)+' CUP</span></div>'
         +'<div class="CHV" id="CH'+fid+'">▼</div>'
         +'</div><div class="HD" id="HD'+fid+'"></div></div>';
@@ -3004,12 +3031,30 @@ async function togHistRec(did,cid,fecha,pick){
   const {data:jj,error:eJJ}=await sb.schema('banca').rpc('recolector_jugadas_dia',{p_token:recToken,p_fecha:fecha});
   if(eJJ){if(_tokenMurio(eJJ))return;d.innerHTML='<div style="font-size:11px;color:var(--rc);text-align:center;padding:8px;">Error al cargar</div>';return;}
   const jDia=jj||[];
-  const ganadores=jDia.filter(j=>j.pick===pick);
-  const resto=jDia.filter(j=>j.pick!==pick);
+  // Resultados de AMBAS sesiones del día (el recolector lee resultados directo)
+  const bIdHR=banqueroId||localStorage.getItem('b_recbid')||'';
+  const resPorSes={};
+  try{
+    const {data:ress}=await sb.from('resultados').select('sesion,numero,pick').eq('fecha',fecha).eq('banquero_id',bIdHR);
+    (ress||[]).forEach(r=>{resPorSes[r.sesion||'dia']={numero:r.numero,pick:r.pick};});
+  }catch{}
   const fmtJ=(j,esG)=>'<div class="HDJ'+(esG?' gan':'')+'"><span class="hpk">'+j.pick+'</span><span class="hcl">'+esc(j.cliente)+'</span><div style="text-align:right;"><div class="hmn">'+parseFloat(j.monto).toFixed(2)+' CUP</div>'+(esG?'<div class="hpr" style="color:var(--vc);">Ganó: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>':'<div class="hpr">Premio: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>')+'</div></div>';
-  const secG=ganadores.length?'<div style="background:rgba(26,122,74,.12);border-radius:6px;margin-bottom:6px;padding:4px 6px;"><div style="font-size:9px;font-weight:700;letter-spacing:1px;color:var(--vc);text-transform:uppercase;padding:4px 2px 6px;">🏆 Ganadores · Pick '+pick+'</div>'+ganadores.map(j=>fmtJ(j,true)).join('')+'</div>':'';
-  const secR='<div style="padding:4px 6px;"><div style="font-size:9px;font-weight:700;letter-spacing:1px;color:var(--t3);text-transform:uppercase;padding:4px 2px 6px;">Todas las jugadas ('+jDia.length+')</div>'+resto.map(j=>fmtJ(j,false)).join('')+'</div>';
-  d.innerHTML=jDia.length?(secG+secR):'<div style="font-size:11px;color:var(--t3);text-align:center;padding:8px;">Sin jugadas</div>';
+  // Separar por sesión (día primero) para no mezclar día/noche
+  const sesionesPresentes=[...new Set(jDia.map(j=>j.sesion||'dia'))].sort((a,b)=>a==='dia'?-1:(b==='dia'?1:0));
+  const bloqueSesion=(ses)=>{
+    const js=jDia.filter(j=>(j.sesion||'dia')===ses);
+    if(!js.length)return '';
+    const info=resPorSes[ses]||{};
+    const pk=info.pick||'';
+    const esN=ses==='noche';
+    const cab='<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;margin:10px 0 6px;border-radius:6px;background:'+(esN?'rgba(200,180,255,.12)':'rgba(255,211,105,.10)')+';font-weight:700;font-size:12px;color:'+(esN?'#c8b4ff':'#ffd369')+';">'+(esN?'🌙 Sesión Noche':'🌅 Sesión Día')+(info.numero?' · N° '+info.numero+' · Pick '+pk:' · Sin resultado')+'</div>';
+    const gan=pk?js.filter(j=>j.pick===pk):[];
+    const secG=gan.length?'<div style="background:rgba(26,122,74,.12);border-radius:6px;margin-bottom:6px;padding:4px 6px;"><div style="font-size:9px;font-weight:700;letter-spacing:1px;color:var(--vc);text-transform:uppercase;padding:4px 2px 6px;">🏆 Ganadores '+(esN?'Noche':'Día')+' · Pick '+pk+' ('+gan.length+')</div>'+gan.map(j=>fmtJ(j,true)).join('')+'</div>':'';
+    const secR='<div style="padding:4px 6px;"><div style="font-size:9px;font-weight:700;letter-spacing:1px;color:var(--t3);text-transform:uppercase;padding:4px 2px 6px;">Todas las jugadas ('+js.length+')</div>'+js.map(j=>fmtJ(j,pk&&j.pick===pk)).join('')+'</div>';
+    return '<div class="ses-grupo">'+cab+secG+secR+'</div>';
+  };
+  const html=sesionesPresentes.map(bloqueSesion).join('');
+  d.innerHTML=jDia.length?html:'<div style="font-size:11px;color:var(--t3);text-align:center;padding:8px;">Sin jugadas</div>';
 }
 
 function togHistAdmEl(el){
@@ -3023,42 +3068,49 @@ async function togHist(did,cid,fecha,pick){
   const op=d.classList.toggle('op');
   if(c)c.classList.toggle('op',op);
   if(!op)return;
-  if(d.querySelector('.HDJ,.rec-grupo'))return;
+  if(d.querySelector('.HDJ,.rec-grupo,.ses-grupo'))return;
   d.innerHTML='<div style="font-size:11px;color:var(--t3);text-align:center;padding:8px;">⏳ Cargando...</div>';
   if(!banqueroId){const {data:sd}=await sb.auth.getSession();banqueroId=sd?.session?.user?.id||null;}
-  const [{data:jj},{data:recs}]=await Promise.all([
+  const [{data:jj},{data:recs},{data:ress}]=await Promise.all([
     // Sin filtro banquero_id — dia_cierre es suficiente para identificar el día
     sb.from('jugadas').select('*').eq('dia_cierre',fecha).order('id',{ascending:true}),
-    banqueroId?sb.schema('banca').from('recolectores').select('id,nombre,username').eq('banquero_id',banqueroId):Promise.resolve({data:[]})
+    banqueroId?sb.schema('banca').from('recolectores').select('id,nombre,username').eq('banquero_id',banqueroId):Promise.resolve({data:[]}),
+    // Resultados de AMBAS sesiones del día: cada sesión tiene su propio número/pick
+    sb.from('resultados').select('sesion,numero,pick').eq('fecha',fecha).eq('banquero_id',banqueroId||'')
   ]);
   const jDia=jj||[];
   const recMap={};(recs||[]).forEach(r=>{recMap[r.id]=r.nombre||r.username;});
-  // Agrupar por recolector
-  const grupos={};
-  jDia.forEach(j=>{
-    const key=j.recolector_id||'admin';
-    if(!grupos[key])grupos[key]=[];
-    grupos[key].push(j);
-  });
+  const resPorSes={};(ress||[]).forEach(r=>{resPorSes[r.sesion||'dia']={numero:r.numero,pick:r.pick};});
   const fmtJ=(j,esG)=>'<div class="HDJ'+(esG?' gan':'')+'"><span class="hpk">'+j.pick+'</span><span class="hcl">'+esc(j.cliente)+'</span><div style="text-align:right;"><div class="hmn">'+parseFloat(j.monto).toFixed(2)+' CUP</div>'+(esG?'<div class="hpr" style="color:var(--vc);">Ganó: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>':'<div class="hpr">Premio: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>')+'</div></div>';
-  // Ganadores globales
-  const ganadores=jDia.filter(j=>j.pick===pick);
-  const secG=ganadores.length?'<div style="background:rgba(26,122,74,.12);border-radius:6px;margin-bottom:8px;padding:4px 6px;"><div style="font-size:9px;font-weight:700;letter-spacing:1px;color:var(--vc);text-transform:uppercase;padding:4px 2px 6px;">🏆 Ganadores · Pick '+pick+'</div>'+ganadores.map(j=>fmtJ(j,true)).join('')+'</div>':'';
-  // Secciones por recolector
-  const secRecs=Object.entries(grupos).map(([rid,jjs])=>{
-    const nombre=rid==='admin'?'👑 Admin (Banquero)':('📋 '+esc(recMap[rid]||rid.substring(0,8)+'...'));
-    const recTotal=fx(jjs.reduce((s,j)=>s+parseFloat(j.monto),0));
-    const gid='rg-'+fecha.replace(/-/g,'')+'-'+rid.substring(0,8);
-    const jugadasHTML=jjs.map(j=>fmtJ(j,j.pick===pick)).join('');
-    return '<div class="rec-grupo" style="border:1px solid var(--br);border-radius:8px;margin-bottom:6px;overflow:hidden;">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--b3);cursor:pointer;" onclick="togH(this.nextElementSibling.id,null)">'
-      +'<div style="font-weight:700;font-size:12px;color:var(--dc);">'+nombre+'</div>'
-      +'<div style="font-size:11px;color:var(--t3);">'+jjs.length+' jugadas · '+recTotal.toFixed(2)+' CUP</div>'
-      +'</div>'
-      +'<div class="HD" id="'+gid+'">'+jugadasHTML+'</div>'
-      +'</div>';
-  }).join('');
-  d.innerHTML=jDia.length?(secG+secRecs):'<div style="font-size:11px;color:var(--t3);text-align:center;padding:8px;">Sin jugadas</div>';
+  // Sesiones presentes en las jugadas (día primero), separadas para no mezclar día/noche
+  const sesionesPresentes=[...new Set(jDia.map(j=>j.sesion||'dia'))].sort((a,b)=>a==='dia'?-1:(b==='dia'?1:0));
+  const bloqueSesion=(ses)=>{
+    const js=jDia.filter(j=>(j.sesion||'dia')===ses);
+    if(!js.length)return '';
+    const info=resPorSes[ses]||{};
+    const pk=info.pick||'';
+    const esN=ses==='noche';
+    const cab='<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;margin:10px 0 6px;border-radius:6px;background:'+(esN?'rgba(200,180,255,.12)':'rgba(255,211,105,.10)')+';font-weight:700;font-size:12px;color:'+(esN?'#c8b4ff':'#ffd369')+';">'+(esN?'🌙 Sesión Noche':'🌅 Sesión Día')+(info.numero?' · N° '+info.numero+' · Pick '+pk:' · Sin resultado')+'</div>';
+    const gan=pk?js.filter(j=>j.pick===pk):[];
+    const secG=gan.length?'<div style="background:rgba(26,122,74,.12);border-radius:6px;margin-bottom:8px;padding:4px 6px;"><div style="font-size:9px;font-weight:700;letter-spacing:1px;color:var(--vc);text-transform:uppercase;padding:4px 2px 6px;">🏆 Ganadores '+(esN?'Noche':'Día')+' · Pick '+pk+' ('+gan.length+')</div>'+gan.map(j=>fmtJ(j,true)).join('')+'</div>':'';
+    const grupos={};js.forEach(j=>{const k=j.recolector_id||'admin';if(!grupos[k])grupos[k]=[];grupos[k].push(j);});
+    const secRecs=Object.entries(grupos).map(([rid,jjs])=>{
+      const nombre=rid==='admin'?'👑 Admin (Banquero)':('📋 '+esc(recMap[rid]||rid.substring(0,8)+'...'));
+      const recTotal=fx(jjs.reduce((s,j)=>s+parseFloat(j.monto),0));
+      const gid='rg-'+fecha.replace(/-/g,'')+'-'+ses+'-'+rid.substring(0,8);
+      const jugadasHTML=jjs.map(j=>fmtJ(j,pk&&j.pick===pk)).join('');
+      return '<div class="rec-grupo" style="border:1px solid var(--br);border-radius:8px;margin-bottom:6px;overflow:hidden;">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--b3);cursor:pointer;" onclick="togH(this.nextElementSibling.id,null)">'
+        +'<div style="font-weight:700;font-size:12px;color:var(--dc);">'+nombre+'</div>'
+        +'<div style="font-size:11px;color:var(--t3);">'+jjs.length+' jugadas · '+recTotal.toFixed(2)+' CUP</div>'
+        +'</div>'
+        +'<div class="HD" id="'+gid+'">'+jugadasHTML+'</div>'
+        +'</div>';
+    }).join('');
+    return '<div class="ses-grupo">'+cab+secG+secRecs+'</div>';
+  };
+  const html=sesionesPresentes.map(bloqueSesion).join('');
+  d.innerHTML=jDia.length?html:'<div style="font-size:11px;color:var(--t3);text-align:center;padding:8px;">Sin jugadas</div>';
 }
 
 function togH(did,cid){const d=document.getElementById(did),c=document.getElementById(cid);const op=d.classList.toggle('op');if(c)c.classList.toggle('op',op);}
