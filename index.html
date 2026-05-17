@@ -2614,7 +2614,7 @@ async function buscarResultadoFlorida(sesion='dia'){
   // Intentar Edge Function primero
   const EF_URL='https://soshfmpdymryihimcwik.supabase.co/functions/v1/smooth-api';
   try{
-    const resp=await fetch(EF_URL+'?sesion='+sesion,{signal:AbortSignal.timeout(8000)});
+    const resp=await fetch(EF_URL+'?sesion='+sesion,{signal:AbortSignal.timeout(22000)});
     if(resp.ok){
       const data=await resp.json();
       if(data.ok&&data.numero&&/^\d{3}$/.test(data.numero))return data.numero;
