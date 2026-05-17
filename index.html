@@ -2702,44 +2702,16 @@ async function applyR(ns){
   // Sesión efectiva: la del huérfano seleccionado, o la de hoy (deriva del resultado aplicado)
   const esOrfano=_esFechaOrfana();
   const sesion=await _sesionResultadoEfectiva();
-  // Filtrar jugadas de esta sesión que aún no tienen cierre
-  const{data:jjPend}=await sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).eq('banquero_id',banqueroId).eq('sesion',sesion);
-  let jj=jjPend||[];
-  // Fallback datos viejos sin tag de sesión: SOLO en flujo de hoy. En un huérfano con sesión
-  // explícita NO se hace, para no arrastrar las jugadas de la otra sesión.
-  if(!jj.length&&!esOrfano){
-    const{data:jjAll}=await sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).eq('banquero_id',banqueroId);
-    jj=jjAll||[];
-  }
-  const gan=jj.filter(j=>j.pick===pick);
-  const rec=fx(jj.reduce((s,j)=>s+parseFloat(j.monto),0));
-  const prem=fx(gan.reduce((s,j)=>s+(parseFloat(j.monto)*PAGO),0));
-  // Comisión por recolector usando su tasa individual
-  let com=0;
-  if(rec>0){
-    const jjConRec=jj.filter(j=>j.recolector_id);
-    // Calcular comision sumando tasa individual de cada recolector
-    com=fx(jjConRec.reduce((s,j)=>{
-      const rate=parseFloat(_RC[j.recolector_id]?.comision||COM*100);
-      return s+parseFloat(j.monto)*(rate/100);
-    },0));
-  }
-  const ganB=fx(rec-com-prem);
-  if(jj.length>0){
-    const ids=jj.map(j=>j.id);
-    const{error:ue}=await sb.from('jugadas').update({dia_cierre:fecha}).in('id',ids);
-    if(ue){toast('Error: '+ue.message,true);return;}
-  }
-  // Guardar resultado con sesion
-  const{error:re}=await sb.from('resultados').upsert(
-    {fecha,sesion,numero:num,pick,ts:new Date().toISOString(),total_rec:rec,total_premios:prem,comision_rec:com,ganancia_banquero:ganB,banquero_id:banqueroId},
-    {onConflict:'fecha,sesion,banquero_id'}
-  );
-  if(re){toast('Error: '+re.message,true);return;}
-  await recalcFondo();
-  await sb.from('ganancias_recolector').insert({fecha,total_rec:rec,comision:com,nota:'Comisión cierre '+sesion+' · Pick '+pick+' · '+num+(fecha!==etHoy()?' · Día '+fmtF(fecha):''),tipo:'cierre_diario',banquero_id:banqueroId});
+  // PUNTO 4: el cierre lo hace el SERVIDOR (cálculo autoritativo y atómico). El cliente solo dispara y muestra.
+  const{data:cr,error:ce}=await sb.schema('banca').rpc('cerrar_sesion',{p_fecha:fecha,p_sesion:sesion,p_numero:num,p_incluir_legacy:!esOrfano});
+  if(ce){toast('Error al cerrar: '+ce.message,true);return;}
+  const _r=(Array.isArray(cr)?cr[0]:cr)||{};
+  const rec=parseFloat(_r.rec||0),prem=parseFloat(_r.prem||0),com=parseFloat(_r.com||0),ganB=parseFloat(_r.ganb||0);
+  // Traer las jugadas ya cerradas SOLO para mostrarlas (lectura; el servidor ya calculó/escribió)
+  const{data:jjC}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion',sesion).eq('banquero_id',banqueroId);
+  const jj=jjC||[];const gan=jj.filter(j=>j.pick===pick);
   const fechaCierreAplicado=fecha;
-  audit('CIERRE_DIA',{fecha,sesion,numero:num,pick,total_rec:rec,total_premios:prem,comision:com,ganancia:ganB,jugadas:jj.length});
+  audit('CIERRE_DIA',{fecha,sesion,numero:num,pick,total_rec:rec,total_premios:prem,comision:com,ganancia:ganB,jugadas:_r.n_jugadas||jj.length});
   fechaResultadoActiva=etHoy();
   showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierreAplicado,sesion);
   await actualizarSelectorFechas();
