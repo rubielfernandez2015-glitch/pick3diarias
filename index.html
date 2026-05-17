@@ -227,6 +227,10 @@ textarea{resize:vertical;min-height:50px;}
       <label>Email</label>
       <input type="email" id="IP-email" placeholder="tu@email.com" onkeydown="if(event.key==='Enter')login()">
     </div>
+    <div id="campo-codigo" style="display:none;">
+      <label>Código de banca</label>
+      <input type="text" id="IP-codigo" placeholder="código de tu banca..." autocomplete="off" oninput="this.value=this.value.toUpperCase().replace(/\s/g,'')" onkeydown="if(event.key==='Enter')login()">
+    </div>
     <div id="campo-usuario" style="display:none;">
       <label>Usuario</label>
       <input type="text" id="IP-usuario" placeholder="tu usuario..." autocomplete="username" oninput="this.value=this.value.toLowerCase().replace(/\s/g,'')" onkeydown="if(event.key==='Enter')login()">
@@ -654,6 +658,10 @@ textarea{resize:vertical;min-height:50px;}
     <div style="background:var(--b3);border:1px solid var(--br);border-radius:10px;padding:1rem;margin-bottom:.75rem;">
       <div style="font-size:10px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Correo</div>
       <div id="AJ-email" style="font-size:14px;color:var(--tx);font-weight:600;">--</div>
+    </div>
+    <div style="margin-bottom:.7rem;">
+      <div style="font-size:10px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Código de tu banca <span style="text-transform:none;color:var(--t3);">· dáselo a tus recolectores para iniciar sesión</span></div>
+      <div id="AJ-codigo" style="font-size:22px;color:var(--dc);font-weight:800;letter-spacing:4px;font-family:'Bebas Neue';">--</div>
     </div>
     <label>Nombre del banquero</label>
     <input type="text" id="AJ-nombre-banca" placeholder="Ej: Juan Pérez...">
@@ -1180,7 +1188,9 @@ function selR(r){
   document.getElementById('ba').classList.toggle('on',r==='admin');
   document.getElementById('br2').classList.toggle('on',r==='recolector');
   document.getElementById('campo-email').style.display=r==='admin'?'block':'none';
+  document.getElementById('campo-codigo').style.display=r==='recolector'?'block':'none';
   document.getElementById('campo-usuario').style.display=r==='recolector'?'block':'none';
+  if(r==='recolector'){const _c=document.getElementById('IP-codigo');if(_c&&!_c.value)_c.value=localStorage.getItem('b_reccod')||'';}
   document.getElementById('link-registro').style.display=r==='admin'?'block':'none';
   document.getElementById('link-olvide').style.display=r==='admin'?'block':'none';
   document.getElementById('LE').style.display='none';
@@ -1316,12 +1326,14 @@ async function login(){
   }else{
     const usuario=document.getElementById('IP-usuario').value.trim().toLowerCase();
     if(!usuario){btn.textContent='Entrar';return toast('Ingresa tu usuario',true);}
+    const codigo=(document.getElementById('IP-codigo').value||'').trim().toUpperCase();
+    if(!codigo){btn.textContent='Entrar';return toast('Ingresa el código de tu banca',true);}
     const hash=await hashPass(pass);
     // Multi-usuario en mismo dispositivo: borrar sesión Supabase-Auth (admin) para que el
     // RPC del recolector corra como anon (si queda JWT authenticated → 42501 permission denied)
     try{await sb.auth.signOut({scope:'local'});}catch{}
     const {data,error}=await sb.schema('banca').rpc('login_recolector',{
-      p_username:usuario, p_password_hash:hash
+      p_codigo:codigo, p_username:usuario, p_password_hash:hash
     });
     const recData=data&&data.length>0?data[0]:null;
     btn.textContent='Entrar';
@@ -1336,6 +1348,7 @@ async function login(){
     localStorage.setItem('b_recnombre',recData.nombre||recData.username||usuario);
     localStorage.setItem('b_reccom',recData.comision||15);
     localStorage.setItem('b_recusr',usuario);
+    localStorage.setItem('b_reccod',codigo);
     localStorage.setItem('b_recbid',recData.banquero_id||'');
     localStorage.setItem('b_rec_sesion_noche',recData.sesion_noche?'true':'false');
     audit('LOGIN_RECOLECTOR',{username:usuario,nombre:recData.nombre},recData.id);
@@ -4518,9 +4531,11 @@ async function loadAjustes(){
   const ajEl=document.getElementById('AJ-email');
   if(ajEl)ajEl.textContent=email;
   // Nombre del banquero (desde tabla banqueros, es el que se muestra en la sesión)
-  const{data:bq}=await sb.schema('banca').from('banqueros').select('nombre').eq('id',bId).maybeSingle();
+  const{data:bq}=await sb.schema('banca').from('banqueros').select('nombre,codigo').eq('id',bId).maybeSingle();
   const nbEl=document.getElementById('AJ-nombre-banca');
   if(nbEl)nbEl.value=bq?.nombre||'';
+  const cdEl=document.getElementById('AJ-codigo');
+  if(cdEl)cdEl.textContent=bq?.codigo||'--';
   // Cargar ajustes guardados
   const{data}=await sb.from('banquero_ajustes').select('*').eq('banquero_id',bId).maybeSingle();
   if(data){
