@@ -1043,7 +1043,9 @@ textarea{resize:vertical;min-height:50px;}
   <div style="background:var(--b2);border:2px solid var(--d);border-radius:16px;padding:1.5rem;max-width:360px;width:100%;text-align:center;">
     <div style="font-size:28px;margin-bottom:.5rem;">🎯</div>
     <div style="font-family:'Bebas Neue';font-size:18px;letter-spacing:2px;color:var(--dc);margin-bottom:.5rem;">Resultado Encontrado</div>
-    <div style="font-size:11px;color:var(--t3);margin-bottom:1rem;" id="CR-origen"></div>
+    <div style="font-size:11px;color:var(--t3);margin-bottom:.4rem;" id="CR-origen"></div>
+    <div style="font-size:12px;color:var(--t3);margin-bottom:.6rem;" id="CR-fecha"></div>
+    <div id="CR-warn" style="display:none;font-size:12px;font-weight:700;color:#fff;background:var(--rc);border-radius:8px;padding:.5rem .6rem;margin-bottom:.8rem;line-height:1.35;"></div>
     <div style="background:var(--b3);border-radius:12px;padding:1rem;margin-bottom:1.2rem;">
       <div style="font-size:11px;color:var(--t3);margin-bottom:4px;">NÚMERO DEL DÍA</div>
       <div id="CR-numero" style="font-family:'Bebas Neue';font-size:52px;color:var(--dc);letter-spacing:4px;">---</div>
@@ -2123,7 +2125,7 @@ async function loadJ(){
       dcbxMensaje={ico:'🌙',titulo:'Sesión Día cerrada',sub:'Jugadas → Sesión Noche de hoy 🌙'};
     } else if(ambasCerradas||(!hayNoche&&cerrado)){
       irSiguienteDia=true;
-      dcbxMensaje={ico:'🔒',titulo:'Día completado',sub:'Jugadas → próximo día 📅'};
+      dcbxMensaje={ico:'✅',titulo:'Día completado',sub:'Las nuevas jugadas cuentan para mañana 📅'};
     }
   } else if(sesionActual==='noche'){
     // Sesión noche activa y abierta: indicar destino sin bloquear el registro
@@ -2143,10 +2145,10 @@ async function loadJ(){
     // Si va a noche: formulario habilitado; si va al siguiente día: formulario sigue activo
     dcbxEl.style.borderColor=irSiguienteDia?'rgba(201,162,39,.3)':'rgba(96,96,180,.4)';
     dcbxEl.style.background=irSiguienteDia?'rgba(201,162,39,.06)':'rgba(96,96,180,.1)';
-    // Deshabilitar botón registrar cuando día completado (sin noche)
-    const btnReg=document.getElementById('BTN-REGJ');if(btnReg)btnReg.disabled=irSiguienteDia;
-    if(irSiguienteDia){if(btnReg)btnReg.style.opacity='0.4';}
-    else{if(btnReg)btnReg.style.opacity='1';}
+    // Día completado → el registro sigue ABIERTO; las nuevas jugadas se guardan
+    // para el día siguiente (insertarJugadas usa sigDia() con cerrado=true).
+    // El bloqueo real (anti-trampa) lo gobierna estaEnCorte()/verificarCorteRegistro().
+    const btnReg=document.getElementById('BTN-REGJ');if(btnReg){btnReg.disabled=false;btnReg.style.opacity='1';}
   } else {
     dcbxEl.style.display='none';
     const btnReg2=document.getElementById('BTN-REGJ');
@@ -2598,7 +2600,7 @@ async function fetchR(){
     const resultado=await buscarResultadoFlorida(sesion);
     if(resultado){
       document.getElementById('IRES').value=resultado;
-      mostrarConfirmResultado(resultado,'auto');
+      mostrarConfirmResultado(resultado,'auto',window._ultResFecha||'');
     }else{
       toast('No disponible — ingresa el número manualmente',true);
     }
@@ -2612,12 +2614,16 @@ async function fetchR(){
 
 async function buscarResultadoFlorida(sesion='dia'){
   // Intentar Edge Function primero
+  window._ultResFecha='';// fecha ISO del resultado traído (blindaje de fecha)
   const EF_URL='https://soshfmpdymryihimcwik.supabase.co/functions/v1/smooth-api';
   try{
     const resp=await fetch(EF_URL+'?sesion='+sesion,{signal:AbortSignal.timeout(22000)});
     if(resp.ok){
       const data=await resp.json();
-      if(data.ok&&data.numero&&/^\d{3}$/.test(data.numero))return data.numero;
+      if(data.ok&&data.numero&&/^\d{3}$/.test(data.numero)){
+        window._ultResFecha=(typeof data.fecha==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(data.fecha))?data.fecha:'';
+        return data.numero;
+      }
     }
   }catch(e){console.warn('Edge fn:',e.message);}
   return null;
@@ -2686,6 +2692,15 @@ async function ejecutarCierreAuto(sesion){
     const numero=await buscarResultadoFlorida(sesion);
     if(!numero){
       toast('⚠️ Auto-cierre: número no disponible aún. Reintentando en 1 min.',true);
+      _ultimaEjecucion='';// permitir reintento
+      return;
+    }
+    // Blindaje de fecha: el cierre automático cierra HOY. Si la Florida Lottery
+    // aún devuelve el resultado de otro día (sorteo no salió), NO aplicar:
+    // reintentar hasta que la fecha del resultado sea la de hoy.
+    const fRes=window._ultResFecha||'';
+    if(fRes&&fRes!==etHoy()){
+      toast('⚠️ Auto-cierre '+sesion+': el resultado disponible es del '+fmtF(fRes)+', no de hoy. Reintentando en 1 min.',true);
       _ultimaEjecucion='';// permitir reintento
       return;
     }
@@ -3806,11 +3821,32 @@ async function loadResumen(){
 // ── CONFIRMACIÓN DE RESULTADO ──
 let _pendingResultNum = null;
 
-function mostrarConfirmResultado(num, origen){
+function mostrarConfirmResultado(num, origen, resFecha){
   _pendingResultNum = num;
   document.getElementById('CR-numero').textContent = num;
   document.getElementById('CR-pick').textContent = 'Pick: ' + num.substring(1,3);
   document.getElementById('CR-origen').textContent = origen==='auto'?'🤖 Obtenido automáticamente':'✋ Ingresado manualmente';
+  // Blindaje de fecha: mostrar la fecha del número traído y avisar si NO es
+  // la fecha que se está cerrando (evita aplicar por error el de otro día).
+  const fEl=document.getElementById('CR-fecha'),wEl=document.getElementById('CR-warn');
+  const btn=document.querySelector('#MOD-confirm-res .BP');
+  const fCierre=fechaResultadoActiva||etHoy();
+  const sl=sesionResultadoActiva?(sesionResultadoActiva==='noche'?' · NOCHE 🌙':' · DÍA 🌅'):'';
+  if(resFecha&&/^\d{4}-\d{2}-\d{2}$/.test(resFecha)){
+    fEl.style.display='';
+    fEl.innerHTML='Resultado del <strong>'+fmtF(resFecha)+'</strong>';
+    if(resFecha!==fCierre){
+      wEl.style.display='';
+      wEl.innerHTML='⚠️ La Florida Lottery devolvió el resultado del <strong>'+fmtF(resFecha)+'</strong>, pero estás cerrando <strong>'+fmtF(fCierre)+sl+'</strong>.<br>El sorteo de esa sesión quizá aún no salió. Verifica antes de cerrar.';
+      if(btn)btn.textContent='⚠️ Cerrar igual';
+    }else{
+      wEl.style.display='none';
+      if(btn)btn.textContent='✓ Confirmar y Cerrar';
+    }
+  }else{
+    fEl.style.display='none';wEl.style.display='none';
+    if(btn)btn.textContent='✓ Confirmar y Cerrar';
+  }
   document.getElementById('MOD-confirm-res').style.display = 'flex';
 }
 
@@ -4702,15 +4738,18 @@ function estaEnCorte(){
     if(mins>=corteNoche)return'noche';
     return false;
   }
-  // Solo bloquear si el resultado YA fue aplicado (_diaOk=true)
-  if(!window._diaOk)return false; // Sin cierre real → nunca bloquear por hora
-  // Día cerrado — verificar si hay noche disponible
+  // SESIÓN DÍA
+  if(!window._diaOk){
+    // Resultado del día aún NO aplicado: anti-trampa → bloquear desde la hora
+    // de corte (≈ hora del sorteo) y hasta que el admin aplique el número.
+    if(mins>=corteDia)return'dia_espera';
+    return false; // antes del corte: registro abierto (jugadas del día)
+  }
+  // Resultado del día YA aplicado:
   const hayNocheRC=Object.values(_RC).some(r=>r.sesion_noche&&r.activo)
     ||(rol==='recolector'&&localStorage.getItem('b_rec_sesion_noche')==='true');
-  if(hayNocheRC&&!window._nocheOk)return'noche_disponible'; // Hay noche abierta → no bloquear fuerte
-  if(!hayNocheRC)return'dia'; // Sin noche → bloquear
-  if(window._nocheOk)return'dia'; // Noche también cerrada → bloquear
-  return false;
+  if(hayNocheRC&&!window._nocheOk)return'noche_disponible'; // jugadas → noche (no bloquea)
+  return false; // sin noche (o noche cerrada): ABIERTO, jugadas → mañana (DCBX informa)
 }
 
 function verificarCorteRegistro(){
@@ -4736,12 +4775,9 @@ function verificarCorteRegistro(){
     const textoEl=document.getElementById('CORTE-TEXTO');
     const subEl=document.getElementById('CORTE-SUB');
     const btnAdmin=document.getElementById('CORTE-BTN-ADMIN');
-    if(corte==='dia'){
-      if(textoEl)textoEl.textContent='✅ Día completado';
-      const hayNocheRC2=Object.values(_RC).some(r=>r.sesion_noche&&r.activo);
-      if(subEl)subEl.textContent=hayNocheRC2
-        ?'Resultado aplicado. Las jugadas van a la Sesión Noche 🌙'
-        :'Resultado aplicado. Las jugadas van al día siguiente 📅';
+    if(corte==='dia_espera'){
+      if(textoEl)textoEl.textContent='⛔ Registro en pausa — esperando resultado del Día';
+      if(subEl)subEl.textContent='Cerrado desde la 1:30 PM ET hasta que se aplique el número del día (anti-trampa).';
     }else{
       if(textoEl)textoEl.textContent='⛔ Registro cerrado — Sesión Noche';
       if(subEl)subEl.textContent='Cerrada a las 9:35 PM ET. Las jugadas registradas ahora van al día siguiente.';
