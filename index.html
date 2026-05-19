@@ -1264,7 +1264,9 @@ function mostrarLogin(){
   ['RS','OL','NC','CE'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
   document.getElementById('LS').style.display='flex';
 }
+let _signupBusy=false;
 async function registrar(){
+  if(_signupBusy)return; // evita doble-submit (Supabase limita signUp ~50s)
   const nombre=document.getElementById('RG-nombre').value.trim();
   const email=document.getElementById('RG-email').value.trim();
   const pass=document.getElementById('RG-pass').value;
@@ -1276,28 +1278,39 @@ async function registrar(){
   if(pass.length<6)return showErr('Contraseña mínimo 6 caracteres');
   if(pass!==pass2)return showErr('Las contraseñas no coinciden');
   const btn=document.getElementById('BTN-REG');
-  btn.textContent='Creando...';
-  const {data,error}=await sb.auth.signUp({email,password:pass});
-  if(error){btn.textContent='Crear Cuenta';return showErr(error.message);}
-  btn.textContent='Crear Cuenta';
-  // Si el email necesita confirmación
-  if(data.user&&!data.session){
-    // Guardar en banqueros aunque no esté confirmado aún
-    await sb.schema('banca').from('banqueros').insert({id:data.user.id,email,nombre});
-    // Mostrar pantalla de confirmación de email
-    document.getElementById('CE-email').textContent=email;
-    window._pendingConfirmEmail=email;
-    ['LS','RS','OL','NC'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
-    document.getElementById('CE').style.display='flex';
-    return;
+  const liberar=()=>{_signupBusy=false;btn.disabled=false;btn.textContent='Crear Cuenta';};
+  _signupBusy=true;btn.disabled=true;btn.textContent='Creando...';
+  let data,error;
+  try{({data,error}=await sb.auth.signUp({email,password:pass}));}
+  catch(ex){liberar();return showErr((ex&&ex.message)||'Error de red. Intenta de nuevo.');}
+  if(error){liberar();return showErr(error.message);}
+  // signUp OK. Crear el banquero es best-effort: NO debe bloquear la transición
+  // (si el usuario aún no está confirmado va como anon y RLS puede rechazarlo;
+  //  el login admin lo crea como red de seguridad).
+  try{
+    if(data.user&&!data.session){
+      // Confirmación requerida → mostrar la pantalla CE PRIMERO
+      document.getElementById('CE-email').textContent=email;
+      window._pendingConfirmEmail=email;
+      ['LS','RS','OL','NC'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
+      document.getElementById('CE').style.display='flex';
+      try{await sb.schema('banca').from('banqueros').insert({id:data.user.id,email,nombre});}catch{}
+      liberar();
+      return;
+    }
+    // Sin confirmación (desactivada en Supabase)
+    const {error:e2}=await sb.schema('banca').from('banqueros').insert({id:data.user.id,email,nombre});
+    if(e2){liberar();return showErr('Error perfil: '+e2.message);}
+    banqueroId=data.user.id;
+    sS('admin');
+    mostrarLogin();
+    startApp('admin');
+    liberar();
+  }catch(ex){
+    // pase lo que pase, nunca dejar la UI congelada
+    liberar();
+    showErr('Cuenta creada. Revisa tu email para confirmar y luego inicia sesión.');
   }
-  // Si no requiere confirmación (confirmación desactivada en Supabase)
-  const {error:e2}=await sb.schema('banca').from('banqueros').insert({id:data.user.id,email,nombre});
-  if(e2)return showErr('Error perfil: '+e2.message);
-  banqueroId=data.user.id;
-  sS('admin');
-  mostrarLogin();
-  startApp('admin');
 }
 
 async function login(){
@@ -1322,6 +1335,16 @@ async function login(){
       return;
     }
     banqueroId=data.user.id;
+    // Red de seguridad: si el signup no creó la fila del banquero (RLS sobre
+    // usuario sin confirmar = anon), crearla ahora que está autenticado. El
+    // trigger trg_banqueros_codigo le asigna el código de banca. Best-effort.
+    try{
+      const {data:bq}=await sb.schema('banca').from('banqueros').select('id').eq('id',data.user.id).maybeSingle();
+      if(!bq){
+        const nom=(data.user.user_metadata&&data.user.user_metadata.nombre)||email.split('@')[0];
+        await sb.schema('banca').from('banqueros').insert({id:data.user.id,email,nombre:nom});
+      }
+    }catch{}
     audit('LOGIN_BANQUERO',{email});
     sS('admin');
     startApp('admin');
@@ -1339,7 +1362,7 @@ async function login(){
     });
     const recData=data&&data.length>0?data[0]:null;
     btn.textContent='Entrar';
-    if(error||!recData){document.getElementById('LE').textContent='Usuario o contraseña incorrectos';document.getElementById('LE').style.display='block';return;}
+    if(error||!recData){document.getElementById('LE').textContent='Código de banca, usuario o contraseña incorrectos';document.getElementById('LE').style.display='block';return;}
     if(!recData.activo){document.getElementById('LE').textContent='Tu cuenta está desactivada. Contacta al banquero.';document.getElementById('LE').style.display='block';return;}
     recId=recData.id;
     recCom=parseFloat(recData.comision||15);
@@ -1515,7 +1538,10 @@ async function doAC(inp){
   if(!q){l.classList.remove('on');return;}
   try{
     const bIdCA=await getBID();
-    const {data}=await sb.from('clientes').select('nombre').ilike('nombre',q+'%').not('nombre','like','__%').eq('banquero_id',bIdCA).limit(6);
+    // '\_\_%' = guiones bajos LITERALES (en LIKE, '_' es comodín de 1 char;
+    // '__%' excluía a casi todos los clientes ⇒ autocompletado siempre vacío).
+    // En JS, '\\_\\_%' produce el patrón \_\_% que PostgreSQL interpreta literal.
+    const {data}=await sb.from('clientes').select('nombre').ilike('nombre',q+'%').not('nombre','like','\\_\\_%').eq('banquero_id',bIdCA).limit(6);
     if(!data||!data.length){l.classList.remove('on');return;}
     l.innerHTML=data.map(c=>{
       const nombre=c.nombre;
@@ -2820,7 +2846,7 @@ async function loadResG(){
   document.getElementById('BRES').style.display='none';
 }
 
-function showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierre,sesion){
+async function showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierre,sesion){
   const sesionLabel=sesion==='noche'?'🌙 Sesión Noche':'🌅 Sesión Día';
   document.getElementById('RNUM').textContent=num;
   document.getElementById('RPICK').textContent=sesionLabel+' · Pick ganador: '+pick;
@@ -2828,11 +2854,28 @@ function showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierre,sesion){
   const gd=document.getElementById('LGAN');
   if(!gan.length){gd.innerHTML='<div class="EM"><span class="bg">😔</span>Nadie acertó hoy</div>';}
   else{const ag={};gan.forEach(j=>{if(!ag[j.cliente])ag[j.cliente]=[];ag[j.cliente].push(j);});gd.innerHTML=Object.entries(ag).map(([n,arr])=>{const p=fx(arr.reduce((s,j)=>s+(parseFloat(j.monto)*PAGO),0));return'<div class="WI"><div><div class="WN">'+esc(n)+'</div><div class="WD">'+arr.map(j=>parseFloat(j.monto).toFixed(2)+' CUP · Pick '+j.pick).join(', ')+'</div></div><div class="WP">'+p.toFixed(2)+' CUP</div></div>';}).join('');}
-  // Desglose de comisión por recolector
+  // Desglose de comisión por recolector. Comisión REAL leída directo de
+  // banca.recolectores (autoritativo, mismo origen que usa el cierre servidor):
+  // no depender de _RC (a veces sin 'comision' → caía al 15% por defecto).
+  const _recIds=[...new Set(jj.filter(j=>j.recolector_id).map(j=>j.recolector_id))];
+  const _recInfo={};
+  if(_recIds.length){
+    try{
+      const {data:_rcs}=await sb.schema('banca').from('recolectores').select('id,nombre,comision').in('id',_recIds);
+      (_rcs||[]).forEach(r=>{_recInfo[r.id]={nombre:r.nombre,rate:parseFloat(r.comision)};});
+    }catch{}
+  }
   const recComLines=()=>{
     const porRec={};
     jj.filter(j=>j.recolector_id).forEach(j=>{
-      if(!porRec[j.recolector_id])porRec[j.recolector_id]={nombre:_RC[j.recolector_id]?.nombre||_RC[j.recolector_id]?.username||'Rec',rate:parseFloat(_RC[j.recolector_id]?.comision||COM*100),monto:0};
+      if(!porRec[j.recolector_id]){
+        const info=_recInfo[j.recolector_id];
+        porRec[j.recolector_id]={
+          nombre:(info&&info.nombre)||_RC[j.recolector_id]?.nombre||_RC[j.recolector_id]?.username||'Rec',
+          rate:(info&&!isNaN(info.rate))?info.rate:parseFloat(_RC[j.recolector_id]?.comision||COM*100),
+          monto:0
+        };
+      }
       porRec[j.recolector_id].monto=fx(porRec[j.recolector_id].monto+parseFloat(j.monto));
     });
     return Object.values(porRec).map(r=>{
@@ -4134,7 +4177,9 @@ async function cargarRecsParaRegistro(){
   try{
     const bId=await getBID();
     // Traer sesion_noche para que _RC sea fuente confiable de "hay noche" (lo usan detectarSesionActiva/loadJ)
-    const {data}=await sb.schema('banca').from('recolectores').select('id,nombre,username,activo,sesion_noche').eq('banquero_id',bId).eq('activo',true).order('nombre');
+    // y 'comision' para que el desglose por-recolector del cierre (showResA L2861)
+    // no caiga al 15% por defecto cuando este cargador corre primero (admin nuevo).
+    const {data}=await sb.schema('banca').from('recolectores').select('id,nombre,username,activo,sesion_noche,comision').eq('banquero_id',bId).eq('activo',true).order('nombre');
     let hayNoche=false;
     (data||[]).forEach(r=>{
       _RC[r.id]=r;
