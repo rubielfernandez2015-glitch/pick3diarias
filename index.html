@@ -1170,7 +1170,7 @@ function showTab(id,e){
   if(id==='exportar'){genD();cargarSelExpRec();}
   if(id==='ajustes')loadAjustes();
   if(id==='resumen')loadResumen();
-  if(id==='registrar')verificarCorteRegistro();
+  if(id==='registrar')resyncEstado();
 }
 
 function setET(t,e){
@@ -1797,6 +1797,23 @@ function avisarBanquero(){
 
 window.addEventListener('online',()=>{actualizarIndicador();setTimeout(()=>{sincronizarCola();startRT();},1500);});
 window.addEventListener('offline',()=>actualizarIndicador());
+
+// Re-sincronizar estado (sesión/banner/corte/registro) al volver a la página:
+// cambio de pestaña del navegador, de app, o reanudar la PWA. Así, si se hizo
+// una operación en otro lado (aplicar/revertir resultado), se refleja al instante.
+let _lastResync=0,_resyncBusy=false;
+async function resyncEstado(){
+  if(!rol)return;                                  // sólo si hay sesión iniciada
+  if(_resyncBusy)return;
+  if(Date.now()-_lastResync<1500)return;           // anti-rebote
+  _resyncBusy=true;_lastResync=Date.now();
+  try{await detectarSesionActiva();}catch{}        // refresca banner + corte
+  try{await loadJ();}catch{}                       // refresca registro (DCBX + pendientes)
+  _resyncBusy=false;
+}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resyncEstado();});
+window.addEventListener('focus',resyncEstado);
+window.addEventListener('pageshow',resyncEstado);
 
 // Separa una línea de jugada en {pick, monto} aceptando: - _ "de" "con"
 function separarLineaJugada(l){
