@@ -2788,6 +2788,7 @@ async function ejecutarCierreAuto(sesion){
 }
 
 
+let _applyBusy=false;
 async function applyR(ns){
   // Si viene del botón Aplicar directo (sin pasar por fetchR), pedir confirmación
   if(!ns){
@@ -2795,29 +2796,57 @@ async function applyR(ns){
     const num=String(parseInt(val)||0).padStart(3,'0');
     if(/^\d{3}$/.test(num)){mostrarConfirmResultado(num,'manual');return;}
   }
-  const val=ns||document.getElementById('IRES').value.trim();
-  const num=String(parseInt(val)||0).padStart(3,'0');
-  if(!/^\d{3}$/.test(num))return toast('Número inválido',true);
-  const pick=num.substring(1,3);
-  const fecha=fechaResultadoActiva||etHoy();
-  // Sesión efectiva: la del huérfano seleccionado, o la de hoy (deriva del resultado aplicado)
-  const esOrfano=_esFechaOrfana();
-  const sesion=await _sesionResultadoEfectiva();
-  // PUNTO 4: el cierre lo hace el SERVIDOR (cálculo autoritativo y atómico). El cliente solo dispara y muestra.
-  const{data:cr,error:ce}=await sb.schema('banca').rpc('cerrar_sesion',{p_fecha:fecha,p_sesion:sesion,p_numero:num,p_incluir_legacy:!esOrfano});
-  if(ce){toast('Error al cerrar: '+ce.message,true);return;}
-  const _r=(Array.isArray(cr)?cr[0]:cr)||{};
-  const rec=parseFloat(_r.rec||0),prem=parseFloat(_r.prem||0),com=parseFloat(_r.com||0),ganB=parseFloat(_r.ganb||0);
-  // Traer las jugadas ya cerradas SOLO para mostrarlas (lectura; el servidor ya calculó/escribió)
-  const{data:jjC}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion',sesion).eq('banquero_id',banqueroId);
-  const jj=jjC||[];const gan=jj.filter(j=>j.pick===pick);
-  const fechaCierreAplicado=fecha;
-  audit('CIERRE_DIA',{fecha,sesion,numero:num,pick,total_rec:rec,total_premios:prem,comision:com,ganancia:ganB,jugadas:_r.n_jugadas||jj.length});
-  fechaResultadoActiva=etHoy();
-  showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierreAplicado,sesion);
-  await actualizarSelectorFechas();
-  await loadJ();
-  await detectarSesionActiva();
+  // Anti-doble-submit: si ya hay un cierre en curso, ignorar.
+  if(_applyBusy){toast('Aplicando resultado, espera…');return;}
+  _applyBusy=true;
+  const _btnAp=document.querySelector('button[onclick*="applyR"]');
+  if(_btnAp){_btnAp.disabled=true;_btnAp.style.opacity='0.5';}
+  try{
+    const val=ns||document.getElementById('IRES').value.trim();
+    if(val&&!/^\d{1,4}$/.test(val)){toast('Número inválido — solo dígitos 0-999',true);return;}
+    const numInt=parseInt(val)||0;
+    if(numInt>999){toast('Número fuera de rango (máximo 999)',true);return;}
+    const num=String(numInt).padStart(3,'0');
+    if(!/^\d{3}$/.test(num)){toast('Número inválido — debe ser 000 a 999',true);return;}
+    const pick=num.substring(1,3);
+    const fecha=fechaResultadoActiva||etHoy();
+    const esOrfano=_esFechaOrfana();
+    const sesion=await _sesionResultadoEfectiva();
+    // GUARDA ANTI-SOBREESCRIBIR (bug real 2026-05-19): si el día/sesión ya tiene cierre,
+    // NO re-disparar el RPC. El segundo cierre no encontraría pendientes, calcularía
+    // totales=0 y haría upsert pisando la fila real en `resultados`.
+    // Para cambiar el número, hay que Revertir explícitamente.
+    const {data:resYa}=await sb.from('resultados').select('numero,total_rec')
+      .eq('fecha',fecha).eq('sesion',sesion).eq('banquero_id',banqueroId||'').maybeSingle();
+    if(resYa){
+      if(resYa.numero===num){
+        toast('Este día ya está cerrado con el número '+num+'.');
+      }else{
+        toast('Día ya cerrado con número '+resYa.numero+'. Usa ↩ Revertir antes de cambiar.',true);
+      }
+      try{await actualizarSelectorFechas();}catch{}
+      try{await loadJ();}catch{}
+      return;
+    }
+    // PUNTO 4: el cierre lo hace el SERVIDOR (cálculo autoritativo y atómico). El cliente solo dispara y muestra.
+    const{data:cr,error:ce}=await sb.schema('banca').rpc('cerrar_sesion',{p_fecha:fecha,p_sesion:sesion,p_numero:num,p_incluir_legacy:!esOrfano});
+    if(ce){toast('Error al cerrar: '+ce.message,true);return;}
+    const _r=(Array.isArray(cr)?cr[0]:cr)||{};
+    const rec=parseFloat(_r.rec||0),prem=parseFloat(_r.prem||0),com=parseFloat(_r.com||0),ganB=parseFloat(_r.ganb||0);
+    const{data:jjC}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion',sesion).eq('banquero_id',banqueroId);
+    const jj=jjC||[];const gan=jj.filter(j=>j.pick===pick);
+    const fechaCierreAplicado=fecha;
+    audit('CIERRE_DIA',{fecha,sesion,numero:num,pick,total_rec:rec,total_premios:prem,comision:com,ganancia:ganB,jugadas:_r.n_jugadas||jj.length});
+    fechaResultadoActiva=etHoy();
+    showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierreAplicado,sesion);
+    // Refresco post-cierre: si alguno falla NO corrompe el cierre (ya hecho server-side).
+    try{await actualizarSelectorFechas();}catch{}
+    try{await loadJ();}catch{}
+    try{await detectarSesionActiva();}catch{}
+  }finally{
+    _applyBusy=false;
+    if(_btnAp){_btnAp.disabled=false;_btnAp.style.opacity='1';}
+  }
 }
 
 async function loadResG(){
@@ -3963,33 +3992,38 @@ async function confirmarRes(){
 }
 
 // ── REVERTIR CIERRE DEL DÍA ──
+let _revertBusy=false;
 async function revertirCierre(fecha){
+  if(_revertBusy){toast('Revirtiendo, espera…');return;}
   if(!fecha) fecha = fechaResultadoActiva || etHoy();
   const {data:res} = await sb.from('resultados').select('fecha,numero,pick').eq('fecha',fecha).eq('banquero_id',banqueroId).maybeSingle();
   if(!res){toast('No hay cierre registrado para ese día',true);return;}
   const conf = confirm('¿Revertir el cierre del ' + fmtF(fecha) + '?\nNúmero: ' + res.numero + '\n\nEsto reabrirá el día para corrección. Las jugadas quedarán pendientes y podrás volver a cerrar.');
   if(!conf)return;
-  toast('Revirtiendo cierre...');
-  // 1. Reabrir jugadas
-  const {error:e1} = await sb.from('jugadas').update({dia_cierre:null}).eq('dia_cierre',fecha).eq('banquero_id',banqueroId);
-  if(e1){toast('Error al reabrir jugadas: '+e1.message,true);return;}
-  // 2. Eliminar resultado
-  const {error:e2} = await sb.from('resultados').delete().eq('fecha',fecha).eq('banquero_id',banqueroId);
-  if(e2){toast('Error al eliminar resultado: '+e2.message,true);return;}
-  // 3. Eliminar entrada de ganancias_recolector de ese día
-  await sb.from('ganancias_recolector').delete().eq('fecha',fecha).eq('tipo','cierre_diario').eq('banquero_id',banqueroId);
-  // 4. Recalcular fondo
-  await recalcFondo();
-  // 5. Actualizar UI
-  fechaResultadoActiva = fecha;
-  audit('REVERTIR_CIERRE',{fecha,numero:res.numero,pick:res.pick});
-  toast('✓ Cierre revertido. El día '+fmtF(fecha)+' está abierto de nuevo.');
-  document.getElementById('IRES').value='';
-  await loadJ();
-  await loadHist();
-  // Ir a tab registrar
-  const tabReg = document.querySelector('.TB[onclick*="registrar"]');
-  if(tabReg) tabReg.click();
+  _revertBusy=true;
+  const _btnRev=document.querySelector('button[onclick*="revertirCierre"]');
+  if(_btnRev){_btnRev.disabled=true;_btnRev.style.opacity='0.5';}
+  try{
+    toast('Revirtiendo cierre...');
+    const {error:e1} = await sb.from('jugadas').update({dia_cierre:null}).eq('dia_cierre',fecha).eq('banquero_id',banqueroId);
+    if(e1){toast('Error al reabrir jugadas: '+e1.message,true);return;}
+    const {error:e2} = await sb.from('resultados').delete().eq('fecha',fecha).eq('banquero_id',banqueroId);
+    if(e2){toast('Error al eliminar resultado: '+e2.message,true);return;}
+    const {error:e3} = await sb.from('ganancias_recolector').delete().eq('fecha',fecha).eq('tipo','cierre_diario').eq('banquero_id',banqueroId);
+    if(e3){toast('Aviso: ganancias_recolector no se limpió ('+e3.message+'). Cierre revertido igualmente.',true);}
+    try{await recalcFondo();}catch(eF){toast('Aviso: fondo no se recalculó. Revisa Fondo.',true);}
+    fechaResultadoActiva = fecha;
+    audit('REVERTIR_CIERRE',{fecha,numero:res.numero,pick:res.pick});
+    toast('✓ Cierre revertido. El día '+fmtF(fecha)+' está abierto de nuevo.');
+    document.getElementById('IRES').value='';
+    try{await loadJ();}catch{}
+    try{await loadHist();}catch{}
+    const tabReg = document.querySelector('.TB[onclick*="registrar"]');
+    if(tabReg) tabReg.click();
+  }finally{
+    _revertBusy=false;
+    if(_btnRev){_btnRev.disabled=false;_btnRev.style.opacity='1';}
+  }
 }
 
 
