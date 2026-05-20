@@ -1176,11 +1176,32 @@ const TR=[{id:'registrar',l:'Registrar'},{id:'resultado',l:'Resultado'},{id:'his
 
 function buildTabs(){document.getElementById('TBBAR').innerHTML=(rol==='admin'?TA:TR).map((t,i)=>`<div class="TB${i===0?' on':''}" onclick="showTab('${t.id}',event)">${t.l}</div>`).join('');}
 
+// Anti-flash en recolector: limpia datos viejos del panel antes de que el loader async termine.
+// Sin esto, al cambiar de tab se ve durante ~3s lo cargado anteriormente (ej. valores pre-cierre).
+function _clearStaleTabRec(id){
+  if(rol!=='recolector')return;
+  const setHTML=(elId,html)=>{const el=document.getElementById(elId);if(el)el.innerHTML=html;};
+  const setTxt=(elId,txt)=>{const el=document.getElementById(elId);if(el)el.textContent=txt;};
+  const cargando='<div class="EM"><span class="bg">⏳</span>Cargando…</div>';
+  if(id==='historial')setHTML('LHIST',cargando);
+  if(id==='ganancias-rec'){
+    ['RHR','RHP','RHC'].forEach(i=>setTxt(i,'…'));
+    setTxt('RACUM','…');
+    setHTML('LGR',cargando); // historial de comisiones del recolector
+  }
+  if(id==='resultado'){
+    const nrs=document.getElementById('NRS');if(nrs)nrs.style.display='none';
+    const npd=document.getElementById('NPD');if(npd){npd.style.display='block';npd.innerHTML=cargando;}
+  }
+  if(id==='registrar')setHTML('JL',cargando);
+}
+
 function showTab(id,e){
   document.querySelectorAll('.TB').forEach(t=>t.classList.remove('on'));
   document.querySelectorAll('.PNL').forEach(p=>p.classList.remove('on'));
   if(e&&e.target)e.target.classList.add('on');
   document.getElementById('P-'+id).classList.add('on');
+  _clearStaleTabRec(id);
   if(id==='resultado'){vistaR();cargarInfoModoResultado();setTimeout(()=>{const el=document.getElementById('IRES');if(el){el.select();el.focus();}},300);}
   if(id==='historial')loadHist();
   if(id==='ganancias-admin')loadGA();
@@ -1415,6 +1436,8 @@ async function login(){
 function logout(){
   if(rts){rts.unsubscribe();rts=null;}
   if(autoFetchTimer){clearInterval(autoFetchTimer);autoFetchTimer=null;}
+  // Limpiar scheduler de cierre auto (corría cada 60s aun después de logout)
+  if(typeof _schedulerInterval!=='undefined'&&_schedulerInterval){clearInterval(_schedulerInterval);_schedulerInterval=null;}
   // Limpiar sesión Supabase-Auth (JWT del admin) para que el próximo usuario no la herede
   try{sb.auth.signOut({scope:'local'});}catch{}
   rol=null;banqueroId=null;recId=null;recCom=15;recToken=null;dS();
@@ -1550,9 +1573,12 @@ document.addEventListener('wheel',function(e){if(document.activeElement&&documen
 
 let _lastTickDate=etHoy();
 function tick(){
+  // Ahorro de batería en PWA: si la pestaña no está visible, no actualizar reloj.
+  if(typeof document.hidden!=='undefined'&&document.hidden)return;
+  if(!rol)return; // sin sesión, no hay reloj que actualizar
   const e=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
-  document.getElementById('HH').textContent=p2(e.getHours())+':'+p2(e.getMinutes())+':'+p2(e.getSeconds())+' ET';
-  document.getElementById('HF').textContent=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][e.getDay()]+' '+e.getDate()+' '+['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][e.getMonth()]+' '+e.getFullYear();
+  const hh=document.getElementById('HH');if(hh)hh.textContent=p2(e.getHours())+':'+p2(e.getMinutes())+':'+p2(e.getSeconds())+' ET';
+  const hf=document.getElementById('HF');if(hf)hf.textContent=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][e.getDay()]+' '+e.getDate()+' '+['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][e.getMonth()]+' '+e.getFullYear();
 }
 
 function capD(el){let v=parseInt(el.value);if(isNaN(v)||v<0)el.value='';else if(v>9)el.value=9;}
@@ -1781,20 +1807,29 @@ async function sincronizarCola(){
   let pendientes=[];
   try{pendientes=await obtenerCola();}catch{return;}
   if(!pendientes.length)return;
-  let subidas=0;
-  for(const j of pendientes){
+  // Paralelizar el insert de jugadas pendientes: con N jugadas offline antes tardaba
+  // N veces el RTT (50 jugadas ≈ 50 round-trips secuenciales); con Promise.all es 1 RTT
+  // (limit en Supabase: razonable hasta ~50). Cada item sigue independiente; un fallo no
+  // bloquea al resto, y se marca como sync sólo si su propia respuesta no tuvo error.
+  const resultados=await Promise.all(pendientes.map(async j=>{
     let error;
     if(rol==='recolector'){
       ({error}=await sb.schema('banca').rpc('recolector_insertar_jugadas',{
         p_token:recToken,p_cliente:j.cliente,p_fecha:j.fecha,p_sesion:j.sesion||'dia',
         p_jugadas:[{dec:j.decena,pick:j.pick,monto:j.monto,hora:j.hora}]
       }));
-      if(error&&_tokenMurio(error))return;
     }else{
       const row={fecha:j.fecha,cliente:j.cliente,decena:j.decena,pick:j.pick,centena:j.centena,numero:j.numero,monto:j.monto,hora:j.hora,dia_cierre:null,sesion:j.sesion||'dia',recolector_id:j.recolector_id||null,banquero_id:j.banquero_id||null};
       ({error}=await sb.from('jugadas').insert(row));
     }
-    if(!error){await marcarSync(j.lid);subidas++;}
+    return {lid:j.lid,error};
+  }));
+  // Si algún token venció en el medio, cerrar sesión recolector y cortar.
+  const tokenMuerto=resultados.find(r=>r.error&&/TOKEN_INVALIDO/.test(r.error.message||r.error.hint||''));
+  if(tokenMuerto){_tokenMurio(tokenMuerto.error);return;}
+  let subidas=0;
+  for(const r of resultados){
+    if(!r.error){await marcarSync(r.lid);subidas++;}
   }
   if(subidas>0){
     toast('📶 '+subidas+' jugada'+(subidas>1?'s':'')+' sincronizada'+(subidas>1?'s es':''));
@@ -2011,7 +2046,8 @@ async function cambiarFechaReg(){
     fechaRegActiva=null;
     return;
   }
-  const {data:res}=await sb.from('resultados').select('numero').eq('fecha',f).maybeSingle();
+  const bIdRF=banqueroId||(await getBID())||'';
+  const {data:res}=await sb.from('resultados').select('numero').eq('fecha',f).eq('banquero_id',bIdRF).maybeSingle();
   if(res){
     aviso.textContent='⚠️ El día '+fmtF(f)+' ya tiene resultado ('+res.numero+'). No se pueden agregar jugadas.';
     aviso.style.display='block';
@@ -2066,7 +2102,11 @@ async function insertarJugadas(cli,jugadas,cerrado){
     const rows=jugadas.map(j=>({fecha:fechaJ,cliente:cli,decena:j.dec,pick:j.pick,centena:'0',numero:j.dec+j.pick,monto:j.monto,hora,dia_cierre:null,sesion:sesionActual,recolector_id:getRecIdParaInsertar(),banquero_id:banqueroId||null}));
     const {error}=await sb.from('jugadas').insert(rows);
     if(error)throw error;
-    await sb.from('clientes').upsert({nombre:cli,ultimo:etHoy()});
+    // upsert del cliente DEBE incluir banquero_id + onConflict por (nombre,banquero_id),
+    // si no, dos bancas con cliente del mismo nombre pisan la fila la una de la otra.
+    if(banqueroId){
+      await sb.from('clientes').upsert({nombre:cli,ultimo:etHoy(),banquero_id:banqueroId},{onConflict:'nombre,banquero_id'});
+    }
   }
   // Pequeña espera para que Supabase confirme antes de loadJ
   await new Promise(r=>setTimeout(r,600));
@@ -2235,10 +2275,11 @@ async function loadJ(){
       if(error){_tokenMurio(error);}else{jjRemote=data||[];}
     }else{
       const bId=await getBID();
-      let qJ=sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).order('id',{ascending:true});
-      if(bId)qJ=qJ.eq('banquero_id',bId);
-      const {data}=await qJ;
-      jjRemote=data||[];
+      if(!bId){jjRemote=[];}
+      else{
+        const {data}=await sb.from('jugadas').select('*').eq('fecha',fecha).is('dia_cierre',null).eq('banquero_id',bId).order('id',{ascending:true});
+        jjRemote=data||[];
+      }
     }
   }catch{}
   // Jugadas locales pendientes
@@ -2482,10 +2523,10 @@ async function verificarLimites(jj){
 function togJG(id){const d=document.getElementById(id),c=document.getElementById('chv-'+id);const op=d.classList.toggle('op');if(c)c.classList.toggle('op',op);}
 function toggleGrupo(chk){const ids=chk.dataset.ids.split(',').map(Number);ids.forEach(id=>{const cb=document.querySelector('.JCK[data-id="'+id+'"]');if(cb)cb.checked=chk.checked;});}
 
-async function delJ(id){if(!confirm('¿Eliminar?'))return;await sb.from('jugadas').delete().eq('id',id);toast('Eliminada');await new Promise(r=>setTimeout(r,300));await loadJ();}
+async function delJ(id){if(!confirm('¿Eliminar?'))return;const bIdDJ=await getBID();if(!bIdDJ){toast('Sesión sin banquero',true);return;}await sb.from('jugadas').delete().eq('id',id).eq('banquero_id',bIdDJ);toast('Eliminada');await new Promise(r=>setTimeout(r,300));await loadJ();}
 function selAll(){const cc=document.querySelectorAll('.JCK:not([data-multi])');const t=Array.from(cc).every(c=>c.checked);cc.forEach(c=>c.checked=!t);}
-async function delSel(){const ids=Array.from(document.querySelectorAll('.JCK:not([data-multi]):checked')).map(c=>parseInt(c.dataset.id));if(!ids.length)return toast('Selecciona jugadas',true);if(!confirm('¿Eliminar '+ids.length+'?'))return;await sb.from('jugadas').delete().in('id',ids);toast(ids.length+' eliminadas');await new Promise(r=>setTimeout(r,300));await loadJ();}
-async function delAll(){if(!confirm('¿Eliminar TODAS?'))return;if(!confirm('Confirma.'))return;const cerrado=await isDiaCerrado();const f=cerrado?sigDia():etHoy();await sb.from('jugadas').delete().eq('fecha',f).is('dia_cierre',null);toast('Todas eliminadas');await new Promise(r=>setTimeout(r,300));await loadJ();}
+async function delSel(){const ids=Array.from(document.querySelectorAll('.JCK:not([data-multi]):checked')).map(c=>parseInt(c.dataset.id));if(!ids.length)return toast('Selecciona jugadas',true);if(!confirm('¿Eliminar '+ids.length+'?'))return;const bIdDS=await getBID();if(!bIdDS){toast('Sesión sin banquero',true);return;}await sb.from('jugadas').delete().in('id',ids).eq('banquero_id',bIdDS);toast(ids.length+' eliminadas');await new Promise(r=>setTimeout(r,300));await loadJ();}
+async function delAll(){if(!confirm('¿Eliminar TODAS?'))return;if(!confirm('Confirma.'))return;const bIdDA=await getBID();if(!bIdDA){toast('Sesión sin banquero',true);return;}const cerrado=await isDiaCerrado();const f=cerrado?sigDia():etHoy();await sb.from('jugadas').delete().eq('fecha',f).is('dia_cierre',null).eq('banquero_id',bIdDA);toast('Todas eliminadas');await new Promise(r=>setTimeout(r,300));await loadJ();}
 
 function iniciarAutoFetch(){
   if(autoFetchTimer)clearInterval(autoFetchTimer);
@@ -2494,7 +2535,9 @@ function iniciarAutoFetch(){
 }
 async function intentarAutoFetch(){
   if(rol!=='admin')return;
-  const {data:resExiste}=await sb.from('resultados').select('numero').eq('fecha',etHoy()).maybeSingle();
+  const bIdAF=(await getBID())||'';
+  if(!bIdAF)return;
+  const {data:resExiste}=await sb.from('resultados').select('numero').eq('fecha',etHoy()).eq('banquero_id',bIdAF).maybeSingle();
   if(resExiste)return;
   const et=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
   const minutosDia=et.getHours()*60+et.getMinutes();
@@ -2630,8 +2673,10 @@ async function vistaR(){
 async function actualizarSelectorFechas(){
   const hoy=etHoy();
   const bIdSF=await getBID();
-  const qHuerfSF=sb.from('jugadas').select('fecha,sesion').is('dia_cierre',null).lt('fecha',hoy);
-  const {data:huerfanas}=await (bIdSF?qHuerfSF.eq('banquero_id',bIdSF):qHuerfSF);
+  // Sin banca conocida: NO leemos huérfanas (no queremos mezclar bancas en el selector).
+  const huerfanas=bIdSF
+    ? (await sb.from('jugadas').select('fecha,sesion').is('dia_cierre',null).lt('fecha',hoy).eq('banquero_id',bIdSF)).data
+    : [];
   const wrap=document.getElementById('RES-fecha-wrap'),sel=document.getElementById('RES-fecha-sel'),label=document.getElementById('RES-fecha-label');
   // Agrupar por (fecha, sesion) para que el pendiente NO mezcle Día y Noche
   const paresH=[...new Set((huerfanas||[]).map(j=>j.fecha+'|'+(j.sesion||'dia')))].sort();
@@ -2799,10 +2844,12 @@ async function applyR(ns){
   // Anti-doble-submit: si ya hay un cierre en curso, ignorar.
   if(_applyBusy){toast('Aplicando resultado, espera…');return;}
   _applyBusy=true;
+  // Deshabilitar el botón visualmente mientras se procesa.
   const _btnAp=document.querySelector('button[onclick*="applyR"]');
   if(_btnAp){_btnAp.disabled=true;_btnAp.style.opacity='0.5';}
   try{
     const val=ns||document.getElementById('IRES').value.trim();
+    // Rechazo claro: si el input tiene caracteres no-dígito (ej. "-5") avisamos antes de parsear.
     if(val&&!/^\d{1,4}$/.test(val)){toast('Número inválido — solo dígitos 0-999',true);return;}
     const numInt=parseInt(val)||0;
     if(numInt>999){toast('Número fuera de rango (máximo 999)',true);return;}
@@ -2810,12 +2857,14 @@ async function applyR(ns){
     if(!/^\d{3}$/.test(num)){toast('Número inválido — debe ser 000 a 999',true);return;}
     const pick=num.substring(1,3);
     const fecha=fechaResultadoActiva||etHoy();
+    // Sesión efectiva: la del huérfano seleccionado, o la de hoy (deriva del resultado aplicado)
     const esOrfano=_esFechaOrfana();
     const sesion=await _sesionResultadoEfectiva();
-    // GUARDA ANTI-SOBREESCRIBIR (bug real 2026-05-19): si el día/sesión ya tiene cierre,
-    // NO re-disparar el RPC. El segundo cierre no encontraría pendientes, calcularía
-    // totales=0 y haría upsert pisando la fila real en `resultados`.
-    // Para cambiar el número, hay que Revertir explícitamente.
+    // GUARDA ANTI-SOBREESCRIBIR (bug real reportado 2026-05-19, confirmado 20-05):
+    // si el día/sesión ya está cerrado, NO re-disparar el RPC. Evita que un segundo
+    // cierre (doble-click escapado o desde otro dispositivo) ejecute cerrar_sesion
+    // sin pendientes, calcule totales=0 y sobreescriba la fila real en `resultados`.
+    // Para cambiar el número de un cierre, hay que Revertir explícitamente primero.
     const {data:resYa}=await sb.from('resultados').select('numero,total_rec')
       .eq('fecha',fecha).eq('sesion',sesion).eq('banquero_id',banqueroId||'').maybeSingle();
     if(resYa){
@@ -2833,13 +2882,15 @@ async function applyR(ns){
     if(ce){toast('Error al cerrar: '+ce.message,true);return;}
     const _r=(Array.isArray(cr)?cr[0]:cr)||{};
     const rec=parseFloat(_r.rec||0),prem=parseFloat(_r.prem||0),com=parseFloat(_r.com||0),ganB=parseFloat(_r.ganb||0);
+    // Traer las jugadas ya cerradas SOLO para mostrarlas (lectura; el servidor ya calculó/escribió)
     const{data:jjC}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion',sesion).eq('banquero_id',banqueroId);
     const jj=jjC||[];const gan=jj.filter(j=>j.pick===pick);
     const fechaCierreAplicado=fecha;
     audit('CIERRE_DIA',{fecha,sesion,numero:num,pick,total_rec:rec,total_premios:prem,comision:com,ganancia:ganB,jugadas:_r.n_jugadas||jj.length});
     fechaResultadoActiva=etHoy();
     showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierreAplicado,sesion);
-    // Refresco post-cierre: si alguno falla NO corrompe el cierre (ya hecho server-side).
+    // Refresco de UI post-cierre: si alguno falla NO corrompe el cierre (ya hecho server-side),
+    // solo no se actualiza la vista; mejor seguir.
     try{await actualizarSelectorFechas();}catch{}
     try{await loadJ();}catch{}
     try{await detectarSesionActiva();}catch{}
@@ -2860,7 +2911,7 @@ async function loadResG(){
     const{data:resN}=await sb.from('resultados').select('*').eq('fecha',fecha).eq('sesion','noche').eq('banquero_id',banqueroId||'').maybeSingle();
     if(resN){
       document.getElementById('IRES').value=resN.numero;
-      const{data:jjsN}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion','noche');
+      const{data:jjsN}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion','noche').eq('banquero_id',banqueroId||'');
       const jjN=jjsN||[];const ganN=jjN.filter(j=>j.pick===resN.pick);
       showResA(resN.numero,resN.pick,jjN,ganN,parseFloat(resN.total_rec||0),parseFloat(resN.total_premios||0),parseFloat(resN.comision_rec||0),parseFloat(resN.ganancia_banquero||0),fecha,'noche');
       return;
@@ -2876,7 +2927,7 @@ async function loadResG(){
   if(res){
     // Hay resultado de la sesión actual — mostrar siempre
     document.getElementById('IRES').value=res.numero;
-    const{data:jjs}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion',res.sesion||sesion);
+    const{data:jjs}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion',res.sesion||sesion).eq('banquero_id',banqueroId||'');
     const jj=jjs||[];const gan=jj.filter(j=>j.pick===res.pick);
     showResA(res.numero,res.pick,jj,gan,parseFloat(res.total_rec||0),parseFloat(res.total_premios||0),parseFloat(res.comision_rec||0),parseFloat(res.ganancia_banquero||0),fecha,res.sesion||sesion);
     return;
@@ -2890,7 +2941,7 @@ async function loadResG(){
       const{data:resD}=await sb.from('resultados').select('*').eq('fecha',fecha).eq('sesion','dia').eq('banquero_id',banqueroId||'').maybeSingle();
       if(resD){
         document.getElementById('IRES').value='';
-        const{data:jjs}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion','dia');
+        const{data:jjs}=await sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('sesion','dia').eq('banquero_id',banqueroId||'');
         const jj=jjs||[];const gan=jj.filter(j=>j.pick===resD.pick);
         showResA(resD.numero,resD.pick,jj,gan,parseFloat(resD.total_rec||0),parseFloat(resD.total_premios||0),parseFloat(resD.comision_rec||0),parseFloat(resD.ganancia_banquero||0),fecha,'dia');
         return;
@@ -3028,10 +3079,14 @@ async function loadResR(){
 }
 
 async function eliminarDiaCompleto(fecha){
-  await sb.from('jugadas').delete().eq('fecha',fecha);
-  await sb.from('jugadas').delete().eq('dia_cierre',fecha);
-  await sb.from('resultados').delete().eq('fecha',fecha);
-  await sb.from('ganancias_recolector').delete().eq('fecha',fecha).eq('tipo','cierre_diario');
+  // Defensa en profundidad multi-banca: aunque RLS ya filtra server-side,
+  // todo delete del admin debe acotarse a SU banquero_id explícitamente.
+  const bId=await getBID();
+  if(!bId){toast('Sesión sin banquero válido',true);return;}
+  await sb.from('jugadas').delete().eq('fecha',fecha).eq('banquero_id',bId);
+  await sb.from('jugadas').delete().eq('dia_cierre',fecha).eq('banquero_id',bId);
+  await sb.from('resultados').delete().eq('fecha',fecha).eq('banquero_id',bId);
+  await sb.from('ganancias_recolector').delete().eq('fecha',fecha).eq('tipo','cierre_diario').eq('banquero_id',bId);
   await recalcFondo();
 }
 
@@ -3053,11 +3108,11 @@ async function loadHist(){
     try{
       if(fechasHistR.length){
         const bIdHR=banqueroId||localStorage.getItem('b_recbid')||'';
-        const qSesHR=bIdHR
-          ?sb.from('resultados').select('fecha,sesion,numero').in('fecha',fechasHistR).eq('banquero_id',bIdHR)
-          :sb.from('resultados').select('fecha,sesion,numero').in('fecha',fechasHistR);
-        const{data:sesHistR}=await qSesHR;
-        (sesHistR||[]).forEach(s=>{(numsPorFechaR[s.fecha]=numsPorFechaR[s.fecha]||[]).push({sesion:s.sesion||'dia',numero:s.numero});});
+        // Sin banca conocida NO leemos cross-banca: preferimos vacío a fuga.
+        if(bIdHR){
+          const{data:sesHistR}=await sb.from('resultados').select('fecha,sesion,numero').in('fecha',fechasHistR).eq('banquero_id',bIdHR);
+          (sesHistR||[]).forEach(s=>{(numsPorFechaR[s.fecha]=numsPorFechaR[s.fecha]||[]).push({sesion:s.sesion||'dia',numero:s.numero});});
+        }
       }
     }catch(e){console.warn('numsPorFechaR:',e);}
     // El RPC devuelve UNA fila por cierre y repite total_rec/total_jugadas/comisión del DÍA en
@@ -3128,7 +3183,8 @@ async function loadHist(){
 
   Object.entries(porFecha).forEach(async ([fecha,sesiones])=>{
     const fid=fecha.replace(/-/g,'');
-    const {count}=await sb.from('jugadas').select('*',{count:'exact',head:true}).eq('dia_cierre',fecha);
+    // Defensa multi-banca: el count del día se acota a la propia banca.
+    const {count}=await sb.from('jugadas').select('*',{count:'exact',head:true}).eq('dia_cierre',fecha).eq('banquero_id',banqueroId||'');
     const el=document.getElementById('jcount-'+fid);
     if(el)el.textContent='('+(count||0)+' jugadas)';
   });
@@ -3191,8 +3247,11 @@ async function togHist(did,cid,fecha,pick){
   d.innerHTML='<div style="font-size:11px;color:var(--t3);text-align:center;padding:8px;">⏳ Cargando...</div>';
   if(!banqueroId){const {data:sd}=await sb.auth.getSession();banqueroId=sd?.session?.user?.id||null;}
   const [{data:jj},{data:recs},{data:ress}]=await Promise.all([
-    // Sin filtro banquero_id — dia_cierre es suficiente para identificar el día
-    sb.from('jugadas').select('*').eq('dia_cierre',fecha).order('id',{ascending:true}),
+    // Multi-banca: dos bancas pueden tener jugadas con el MISMO dia_cierre → filtrar por banca
+    // es OBLIGATORIO. Si banqueroId no está poblado, devolver vacío en lugar de leak.
+    banqueroId
+      ? sb.from('jugadas').select('*').eq('dia_cierre',fecha).eq('banquero_id',banqueroId).order('id',{ascending:true})
+      : Promise.resolve({data:[]}),
     banqueroId?sb.schema('banca').from('recolectores').select('id,nombre,username').eq('banquero_id',banqueroId):Promise.resolve({data:[]}),
     // Resultados de AMBAS sesiones del día: cada sesión tiene su propio número/pick
     sb.from('resultados').select('sesion,numero,pick').eq('fecha',fecha).eq('banquero_id',banqueroId||'')
@@ -3235,7 +3294,7 @@ async function togHist(did,cid,fecha,pick){
 function togH(did,cid){const d=document.getElementById(did),c=document.getElementById(cid);const op=d.classList.toggle('op');if(c)c.classList.toggle('op',op);}
 function hSelAll(){const cc=document.querySelectorAll('.HHK');const t=Array.from(cc).every(c=>c.checked);cc.forEach(c=>c.checked=!t);}
 async function hDelSel(){const ff=Array.from(document.querySelectorAll('.HHK:checked')).map(c=>c.dataset.fecha);if(!ff.length)return toast('Selecciona registros',true);if(!confirm('¿Eliminar '+ff.length+' día(s)?'))return;for(const f of ff)await eliminarDiaCompleto(f);toast(ff.length+' día(s) eliminados');await loadHist();}
-async function hDelAll(){if(!confirm('¿Borrar TODO el historial? Los acumulados previos del recolector NO se borran.'))return;if(!confirm('Confirma.'))return;const bIdDel=await getBID();await sb.from('jugadas').delete().gte('fecha','2000-01-01').eq('banquero_id',bIdDel);await sb.from('resultados').delete().gte('fecha','2000-01-01').eq('banquero_id',bIdDel);await sb.from('ganancias_recolector').delete().eq('tipo','cierre_diario').eq('banquero_id',bIdDel);await recalcFondo();toast('Historial borrado');await loadHist();}
+async function hDelAll(){if(!confirm('¿Borrar TODO el historial? Los acumulados previos del recolector NO se borran.'))return;if(!confirm('Confirma.'))return;const bIdDel=await getBID();if(!bIdDel){toast('Sesión sin banquero',true);return;}await sb.from('jugadas').delete().gte('fecha','2000-01-01').eq('banquero_id',bIdDel);await sb.from('resultados').delete().gte('fecha','2000-01-01').eq('banquero_id',bIdDel);await sb.from('ganancias_recolector').delete().eq('tipo','cierre_diario').eq('banquero_id',bIdDel);await recalcFondo();toast('Historial borrado');await loadHist();}
 
 async function loadGA(){
   const bId=await getBID();
@@ -3293,11 +3352,15 @@ async function loadGR(){
   // Acumulados manuales (Agregar Comisión Anterior):
   //  - El recolector está autenticado por token (no Supabase-Auth) → query directa a
   //    public.ganancias_recolector devuelve 401 por RLS (lo trata como anon).
-  //  - Por eso va por RPC banca.acumulados_recolector(p_token) (SECURITY DEFINER, valida
-  //    token y filtra por recolector_id + banquero_id ahí dentro).
+  //  - Por eso el recolector va por RPC `banca.acumulados_recolector(p_token)` (SECURITY DEFINER,
+  //    valida token y filtra por recolector_id/banquero_id ahí adentro). El admin sí tiene sesión
+  //    Auth y puede ir directo a la tabla.
+  const bIdGR0=banqueroId||localStorage.getItem('b_recbid')||'';
   const manualesQuery = recToken
     ? sb.schema('banca').rpc('acumulados_recolector',{p_token:recToken})
-    : Promise.resolve({data:[]});
+    : (bIdGR0
+        ? sb.from('ganancias_recolector').select('*').eq('banquero_id',bIdGR0).eq('recolector_id',myRec).neq('tipo','cierre_diario').order('created_at',{ascending:true})
+        : Promise.resolve({data:[]}));
   const [{data:rows2,error:e2},{data:manuales,error:eM}]=await Promise.all([
     sb.rpc('historial_recolector',{p_recolector_id:myRec}),
     manualesQuery
@@ -3310,11 +3373,11 @@ async function loadGR(){
     if(sorted.length){
       const fechasGR=sorted.map(r=>r.dia_cierre);
       const bIdGR=banqueroId||localStorage.getItem('b_recbid')||'';
-      const qSesGR=bIdGR
-        ?sb.from('resultados').select('fecha,sesion').in('fecha',fechasGR).eq('banquero_id',bIdGR)
-        :sb.from('resultados').select('fecha,sesion').in('fecha',fechasGR);
-      const{data:sesGR}=await qSesGR;
-      (sesGR||[]).forEach(s=>{if(!sesionMapGR[s.fecha])sesionMapGR[s.fecha]=s.sesion;});
+      // Sin banca conocida NO leemos cross-banca.
+      if(bIdGR){
+        const{data:sesGR}=await sb.from('resultados').select('fecha,sesion').in('fecha',fechasGR).eq('banquero_id',bIdGR);
+        (sesGR||[]).forEach(s=>{if(!sesionMapGR[s.fecha])sesionMapGR[s.fecha]=s.sesion;});
+      }
     }
   }catch(e){console.warn('sesionMapGR:',e);}
   let totalAcum=0;
@@ -3351,12 +3414,20 @@ async function addGR(){
   if(!fecha)return toast('Selecciona la fecha',true);
   if(isNaN(com)||com<=0)return toast('Ingresa el monto de comisión',true);
   if(!nota)return toast('La descripción es obligatoria',true);
-  const {error}=await sb.from('ganancias_recolector').insert({fecha,total_rec:0,comision:com,nota,tipo:'acumulado_previo'});
+  // banquero_id explícito (anti-fuga multi-banca) + recolector_id si lo registra un recolector
+  // (así cada recolector ve solo sus propios acumulados; en banca con varios recolectores
+  // no se mezclan los manuales de uno con los de otro).
+  const bIdAC=banqueroId||(await getBID());
+  if(!bIdAC)return toast('Sesión sin banquero',true);
+  const recIdAC=rol==='recolector'?(recId||localStorage.getItem('b_recid')||null):null;
+  const fila={fecha,total_rec:0,comision:com,nota,tipo:'acumulado_previo',banquero_id:bIdAC};
+  if(recIdAC)fila.recolector_id=recIdAC;
+  const {error}=await sb.from('ganancias_recolector').insert(fila);
   if(error)return toast('Error: '+error.message,true);
   document.getElementById('RGCOM').value='';document.getElementById('RGNOTA').value='';
   toast('✓ '+com.toFixed(2)+' CUP registrados');await loadGR();
 }
-async function delGR(id){if(!confirm('¿Eliminar?'))return;await sb.from('ganancias_recolector').delete().eq('id',id);toast('Eliminado');await loadGR();}
+async function delGR(id){if(!confirm('¿Eliminar?'))return;const bIdGD=banqueroId||(await getBID());if(!bIdGD){toast('Sesión sin banquero',true);return;}await sb.from('ganancias_recolector').delete().eq('id',id).eq('banquero_id',bIdGD);toast('Eliminado');await loadGR();}
 
 let ajusteSigno='+';
 function abrirAjuste(signo){ajusteSigno=signo;document.getElementById('FO-ajuste-panel').style.display='block';document.getElementById('FO-ajuste-titulo').textContent=signo==='+'?'Agregar al Fondo':'Restar del Fondo';document.getElementById('FO-btn-guardar-ajuste').style.background=signo==='+'?'linear-gradient(135deg,#1a5276,#2e86c1)':'var(--r)';document.getElementById('FO-monto-ajuste').value='';document.getElementById('FO-desc-ajuste').value='';document.getElementById('FO-monto-ajuste').focus();}
@@ -3405,8 +3476,8 @@ async function loadFo(){
 
 async function saveFoBase(){const val=parseFloat(document.getElementById('IFO').value);if(isNaN(val)||val<0)return toast('Monto inválido',true);const bIdFB=await getBID();await sb.from('clientes').upsert({nombre:'__FONDO_BASE__',ultimo:val.toFixed(2),banquero_id:bIdFB},{onConflict:'nombre,banquero_id'});document.getElementById('IFO').value='';toast('✓ Fondo inicial: '+val.toFixed(2)+' CUP');await loadFo();}
 async function saveFoAcum(){const val=parseFloat(document.getElementById('IFO-acum').value);if(isNaN(val)||val<0)return toast('Monto inválido',true);const bIdFA=await getBID();await sb.from('clientes').upsert({nombre:'__FONDO_ACUM__',ultimo:val.toFixed(2),banquero_id:bIdFA},{onConflict:'nombre,banquero_id'});document.getElementById('IFO-acum').value='';toast('✓ Acumulado previo: '+val.toFixed(2)+' CUP');await loadFo();}
-async function delFoSel(){const ids=Array.from(document.querySelectorAll('.fo-chk:checked')).map(c=>parseInt(c.dataset.id));if(!ids.length)return toast('Selecciona movimientos',true);if(!confirm('¿Eliminar '+ids.length+'?'))return;await sb.from('fondo_movimientos').delete().in('id',ids);toast(ids.length+' eliminados');await loadFo();}
-async function delFoTodo(){if(!confirm('¿Borrar TODOS los movimientos?'))return;await sb.from('fondo_movimientos').delete().gte('id',0);toast('Borrado');await loadFo();}
+async function delFoSel(){const ids=Array.from(document.querySelectorAll('.fo-chk:checked')).map(c=>parseInt(c.dataset.id));if(!ids.length)return toast('Selecciona movimientos',true);if(!confirm('¿Eliminar '+ids.length+'?'))return;const bIdFS=await getBID();if(!bIdFS)return toast('Sesión sin banquero',true);await sb.from('fondo_movimientos').delete().in('id',ids).eq('banquero_id',bIdFS);toast(ids.length+' eliminados');await loadFo();}
+async function delFoTodo(){if(!confirm('¿Borrar TODOS los movimientos?'))return;const bIdFT=await getBID();if(!bIdFT)return toast('Sesión sin banquero',true);await sb.from('fondo_movimientos').delete().eq('banquero_id',bIdFT);toast('Borrado');await loadFo();}
 
 
 // ── GESTIÓN EQUIPO DE RECOLECTORES ──
@@ -3645,7 +3716,7 @@ async function calcWalletSaldo(recId){
   const [{data:rows},{data:movs},{data:jjHoy}]=await Promise.all([
     sb.rpc('historial_recolector',{p_recolector_id:recId}),
     sb.schema('banca').rpc('movimientos_recolector',{p_recolector_id:recId}),
-    sb.from('jugadas').select('monto').eq('recolector_id',recId).is('dia_cierre',null)
+    sb.from('jugadas').select('monto').eq('recolector_id',recId).is('dia_cierre',null).eq('banquero_id',banqueroId||'')
   ]);
   // Días cerrados: rec - comision - premios
   let totalNeto=0;
@@ -3768,13 +3839,15 @@ async function genRec(){
   const rData=rec.data||{};
   const com=parseFloat(rData.comision||15);
   const nombre=rData.nombre||rData.username||'Recolector';
-  let qJ=sb.from('jugadas').select('*').eq('recolector_id',rid).not('dia_cierre','is',null).order('dia_cierre',{ascending:true});
+  const bIdRR=banqueroId||(await getBID())||'';
+  let qJ=sb.from('jugadas').select('*').eq('recolector_id',rid).eq('banquero_id',bIdRR).not('dia_cierre','is',null).order('dia_cierre',{ascending:true});
   if(per==='mes'&&mes)qJ=qJ.like('dia_cierre',mes+'%');
   const {data:jj}=await qJ.limit(5000);
   if(!jj||!jj.length){div.textContent='Sin jugadas en el período seleccionado';return;}
   const pf={};jj.forEach(j=>{if(!pf[j.dia_cierre])pf[j.dia_cierre]=[];pf[j.dia_cierre].push(j);});
   const fechas=Object.keys(pf).sort();
-  const {data:rr}=await sb.from('resultados').select('fecha,pick,numero').in('fecha',fechas);
+  const bIdRpt=banqueroId||(await getBID())||'';
+  const {data:rr}=await sb.from('resultados').select('fecha,pick,numero').in('fecha',fechas).eq('banquero_id',bIdRpt);
   const rm={};(rr||[]).forEach(r=>{rm[r.fecha]=r;});
   const s='─'.repeat(40);
   let txt='REPORTE RECOLECTOR: '+nombre.toUpperCase()+'\n'+s+'\nComisión: '+com+'%\n'+s+'\n';
@@ -4005,19 +4078,25 @@ async function revertirCierre(fecha){
   if(_btnRev){_btnRev.disabled=true;_btnRev.style.opacity='0.5';}
   try{
     toast('Revirtiendo cierre...');
+    // 1. Reabrir jugadas
     const {error:e1} = await sb.from('jugadas').update({dia_cierre:null}).eq('dia_cierre',fecha).eq('banquero_id',banqueroId);
     if(e1){toast('Error al reabrir jugadas: '+e1.message,true);return;}
+    // 2. Eliminar resultado
     const {error:e2} = await sb.from('resultados').delete().eq('fecha',fecha).eq('banquero_id',banqueroId);
     if(e2){toast('Error al eliminar resultado: '+e2.message,true);return;}
+    // 3. Eliminar entrada de ganancias_recolector de ese día
     const {error:e3} = await sb.from('ganancias_recolector').delete().eq('fecha',fecha).eq('tipo','cierre_diario').eq('banquero_id',banqueroId);
     if(e3){toast('Aviso: ganancias_recolector no se limpió ('+e3.message+'). Cierre revertido igualmente.',true);}
+    // 4. Recalcular fondo
     try{await recalcFondo();}catch(eF){toast('Aviso: fondo no se recalculó. Revisa Fondo.',true);}
+    // 5. Actualizar UI
     fechaResultadoActiva = fecha;
     audit('REVERTIR_CIERRE',{fecha,numero:res.numero,pick:res.pick});
     toast('✓ Cierre revertido. El día '+fmtF(fecha)+' está abierto de nuevo.');
     document.getElementById('IRES').value='';
     try{await loadJ();}catch{}
     try{await loadHist();}catch{}
+    // Ir a tab registrar
     const tabReg = document.querySelector('.TB[onclick*="registrar"]');
     if(tabReg) tabReg.click();
   }finally{
@@ -4144,8 +4223,8 @@ function recargarExportar(){
 
 async function getDiaFiltrado(fecha,rid){
   const bId=await getBID();
-  let qJ=sb.from('jugadas').select('*').eq('fecha',fecha);
-  if(bId)qJ=qJ.eq('banquero_id',bId);
+  if(!bId)return{jj:[],res:null,gan:[],rec:0,prem:0,com:0,ganancia:0,pick:''};
+  let qJ=sb.from('jugadas').select('*').eq('fecha',fecha).eq('banquero_id',bId);
   if(rid)qJ=qJ.eq('recolector_id',rid);
   else qJ=qJ; // todos
   const {data:jjs}=await qJ;
@@ -4172,22 +4251,25 @@ async function genD(){
 async function borrarDia(){const f=document.getElementById('EFD').value;if(!f)return toast('Selecciona una fecha',true);if(!confirm('¿Borrar TODO el día '+fmtF(f)+'?'))return;await eliminarDiaCompleto(f);toast('Día borrado');await genD();}
 async function genS(){const ref=document.getElementById('EFS').value;if(!ref)return;const rid=document.getElementById('EXP-REC')?.value||'';const dt=new Date(ref+'T12:00:00');const lu=new Date(dt);lu.setDate(dt.getDate()-((dt.getDay()+6)%7));const dias=[];for(let i=0;i<7;i++){const d2=new Date(lu);d2.setDate(lu.getDate()+i);dias.push(d2.toISOString().substring(0,10));}const s='─'.repeat(40);const recLbl=rid&&_RC[rid]?' · '+(_RC[rid].nombre||_RC[rid].username):'';let txt='BANCO DE BOLITA · REPORTE SEMANAL'+recLbl+'\n'+s+'\nSemana: '+fmtF(dias[0])+' al '+fmtF(dias[6])+'\n'+s+'\n';let tR=0,tP=0,tC=0,tG=0;for(const f of dias){const d=await getDiaFiltrado(f,rid);tR+=d.rec;tP+=d.prem;tC+=d.com;tG+=d.ganancia;txt+=fmtF(f)+'\n';if(!d.jj.length){txt+='  Sin actividad\n\n';continue;}txt+='  J:'+d.jj.length+' Rec:'+d.rec.toFixed(2)+' Prem:'+d.prem.toFixed(2)+' Bal:'+(d.ganancia>=0?'+':'')+d.ganancia.toFixed(2)+' CUP\n'+(d.res?'  Número: '+d.res.numero+' Gan: '+d.gan.length+'\n':'')+'\n';}txt+=s+'\nRESUMEN Rec:'+fx(tR).toFixed(2)+' Com:'+fx(tC).toFixed(2)+' Prem:'+fx(tP).toFixed(2)+'\n'+(tG>=0?'GANANCIA: +':'PÉRDIDA:  ')+fx(tG).toFixed(2)+' CUP\n';document.getElementById('PS').textContent=txt;}
 async function borrarSemana(){const ref=document.getElementById('EFS').value;if(!ref)return toast('Selecciona una fecha',true);const dt=new Date(ref+'T12:00:00');const lu=new Date(dt);lu.setDate(dt.getDate()-((dt.getDay()+6)%7));const dias=[];for(let i=0;i<7;i++){const d2=new Date(lu);d2.setDate(lu.getDate()+i);dias.push(d2.toISOString().substring(0,10));}if(!confirm('¿Borrar semana '+fmtF(dias[0])+' al '+fmtF(dias[6])+'?'))return;for(const f of dias)await eliminarDiaCompleto(f);toast('Semana borrada');await genS();}
-async function genM(){const mes=document.getElementById('EFM').value;if(!mes)return;const rid=document.getElementById('EXP-REC')?.value||'';const bIdM=await getBID();let qM=sb.from('jugadas').select('*').like('fecha',mes+'%');if(bIdM)qM=qM.eq('banquero_id',bIdM);if(rid)qM=qM.eq('recolector_id',rid);const {data:jM}=await qM;const {data:rM}=await sb.from('resultados').select('*').like('fecha',mes+'%').eq('banquero_id',bIdM||'');const fechas=[...new Set((jM||[]).map(j=>j.fecha))].sort();const [y,m]=mes.split('-');const mn=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];const s='─'.repeat(40);const recLblM=rid&&_RC[rid]?' · '+(_RC[rid].nombre||_RC[rid].username):'';let txt='BANCO DE BOLITA · REPORTE MENSUAL'+recLblM+'\n'+s+'\nMes: '+mn[+m-1]+' '+y+'\n'+s+'\n';let tR=0,tP=0,tC=0,tG=0;for(const f of fechas){const jj=(jM||[]).filter(j=>j.fecha===f);const res=(rM||[]).find(r=>r.fecha===f);const pick=res?.pick;const gan=pick?jj.filter(j=>j.pick===pick):[];const rec=fx(jj.reduce((s2,j)=>s2+parseFloat(j.monto),0));const prem=fx(gan.reduce((s2,j)=>s2+(parseFloat(j.monto)*PAGO),0));const com=res?.comision_rec!=null?fx(parseFloat(res.comision_rec)):fx(rec*COM);const bal=fx(rec-com-prem);tR+=rec;tP+=prem;tC+=com;tG+=bal;txt+=fmtF(f).padEnd(14)+' J:'+String(jj.length).padStart(3)+' Rec:'+rec.toFixed(2).padStart(8)+' Bal:'+(bal>=0?'+':'')+bal.toFixed(2)+' CUP'+(res?' N°:'+res.numero:' Pendiente')+'\n';}if(!fechas.length)txt+='  Sin actividad\n';txt+=s+'\nDías: '+fechas.length+' Rec:'+fx(tR).toFixed(2)+' Com:'+fx(tC).toFixed(2)+' Prem:'+fx(tP).toFixed(2)+'\n'+(tG>=0?'GANANCIA: +':'PÉRDIDA:  ')+fx(tG).toFixed(2)+' CUP\n';document.getElementById('PM').textContent=txt;}
-async function borrarMes(){const mes=document.getElementById('EFM').value;if(!mes)return toast('Selecciona un mes',true);const [y,m]=mes.split('-');const mn=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];if(!confirm('¿Borrar mes de '+mn[+m-1]+' '+y+'?'))return;const {data:rM}=await sb.from('resultados').select('fecha').like('fecha',mes+'%');const {data:jM}=await sb.from('jugadas').select('fecha').like('fecha',mes+'%');const fechas=[...new Set([...(rM||[]).map(r=>r.fecha),...(jM||[]).map(j=>j.fecha)])];for(const f of fechas)await eliminarDiaCompleto(f);toast('Mes borrado');await genM();}
-async function dlC(tipo){let csv='Fecha,Cliente,Pick,Decena,Numero,Monto CUP,Premio si gana,Gano,Hora\n',nombre='jugadas-'+tipo;const rid2=document.getElementById('EXP-REC')?.value||'';const rows=async(f)=>{let qjj=sb.from('jugadas').select('*').eq('fecha',f);if(rid2)qjj=qjj.eq('recolector_id',rid2);const {data:jjs}=await qjj;const {data:res}=await sb.from('resultados').select('pick').eq('fecha',f).maybeSingle();const pick=res?.pick;return(jjs||[]).map(j=>{const g=pick&&j.pick===pick?'SI':'NO';return j.fecha+','+j.cliente+','+j.pick+','+j.decena+','+j.numero+','+parseFloat(j.monto).toFixed(2)+','+(g==='SI'?(parseFloat(j.monto)*PAGO).toFixed(2):'0')+','+g+','+(j.hora||'')+'\n';}).join('');};if(tipo==='dia'){const f=document.getElementById('EFD').value;csv+=await rows(f);nombre+='-'+f;}else if(tipo==='semana'){const ref=document.getElementById('EFS').value;const dt=new Date(ref+'T12:00:00');const lu=new Date(dt);lu.setDate(dt.getDate()-((dt.getDay()+6)%7));for(let i=0;i<7;i++){const d2=new Date(lu);d2.setDate(lu.getDate()+i);csv+=await rows(d2.toISOString().substring(0,10));}nombre+='-'+ref;}else{const mes=document.getElementById('EFM').value;const {data:jM}=await sb.from('jugadas').select('fecha').like('fecha',mes+'%');const ff=[...new Set((jM||[]).map(j=>j.fecha))];for(const f of ff)csv+=await rows(f);nombre+='-'+mes;}  if(tipo==='recolector'){
+async function genM(){const mes=document.getElementById('EFM').value;if(!mes)return;const rid=document.getElementById('EXP-REC')?.value||'';const bIdM=await getBID();if(!bIdM){toast('Sesión sin banquero',true);return;}let qM=sb.from('jugadas').select('*').like('fecha',mes+'%').eq('banquero_id',bIdM);if(rid)qM=qM.eq('recolector_id',rid);const {data:jM}=await qM;const {data:rM}=await sb.from('resultados').select('*').like('fecha',mes+'%').eq('banquero_id',bIdM);const fechas=[...new Set((jM||[]).map(j=>j.fecha))].sort();const [y,m]=mes.split('-');const mn=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];const s='─'.repeat(40);const recLblM=rid&&_RC[rid]?' · '+(_RC[rid].nombre||_RC[rid].username):'';let txt='BANCO DE BOLITA · REPORTE MENSUAL'+recLblM+'\n'+s+'\nMes: '+mn[+m-1]+' '+y+'\n'+s+'\n';let tR=0,tP=0,tC=0,tG=0;for(const f of fechas){const jj=(jM||[]).filter(j=>j.fecha===f);const res=(rM||[]).find(r=>r.fecha===f);const pick=res?.pick;const gan=pick?jj.filter(j=>j.pick===pick):[];const rec=fx(jj.reduce((s2,j)=>s2+parseFloat(j.monto),0));const prem=fx(gan.reduce((s2,j)=>s2+(parseFloat(j.monto)*PAGO),0));const com=res?.comision_rec!=null?fx(parseFloat(res.comision_rec)):fx(rec*COM);const bal=fx(rec-com-prem);tR+=rec;tP+=prem;tC+=com;tG+=bal;txt+=fmtF(f).padEnd(14)+' J:'+String(jj.length).padStart(3)+' Rec:'+rec.toFixed(2).padStart(8)+' Bal:'+(bal>=0?'+':'')+bal.toFixed(2)+' CUP'+(res?' N°:'+res.numero:' Pendiente')+'\n';}if(!fechas.length)txt+='  Sin actividad\n';txt+=s+'\nDías: '+fechas.length+' Rec:'+fx(tR).toFixed(2)+' Com:'+fx(tC).toFixed(2)+' Prem:'+fx(tP).toFixed(2)+'\n'+(tG>=0?'GANANCIA: +':'PÉRDIDA:  ')+fx(tG).toFixed(2)+' CUP\n';document.getElementById('PM').textContent=txt;}
+async function borrarMes(){const mes=document.getElementById('EFM').value;if(!mes)return toast('Selecciona un mes',true);const [y,m]=mes.split('-');const mn=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];if(!confirm('¿Borrar mes de '+mn[+m-1]+' '+y+'?'))return;const bIdBM=await getBID();if(!bIdBM){toast('Sesión sin banquero',true);return;}const {data:rM}=await sb.from('resultados').select('fecha').like('fecha',mes+'%').eq('banquero_id',bIdBM);const {data:jM}=await sb.from('jugadas').select('fecha').like('fecha',mes+'%').eq('banquero_id',bIdBM);const fechas=[...new Set([...(rM||[]).map(r=>r.fecha),...(jM||[]).map(j=>j.fecha)])];for(const f of fechas)await eliminarDiaCompleto(f);toast('Mes borrado');await genM();}
+async function dlC(tipo){let csv='Fecha,Cliente,Pick,Decena,Numero,Monto CUP,Premio si gana,Gano,Hora\n',nombre='jugadas-'+tipo;const rid2=document.getElementById('EXP-REC')?.value||'';const bIdDL=await getBID();if(!bIdDL){toast('Sesión sin banquero',true);return;}const rows=async(f)=>{let qjj=sb.from('jugadas').select('*').eq('fecha',f).eq('banquero_id',bIdDL);if(rid2)qjj=qjj.eq('recolector_id',rid2);const {data:jjs}=await qjj;const {data:res}=await sb.from('resultados').select('pick').eq('fecha',f).eq('banquero_id',bIdDL).maybeSingle();const pick=res?.pick;return(jjs||[]).map(j=>{const g=pick&&j.pick===pick?'SI':'NO';return j.fecha+','+j.cliente+','+j.pick+','+j.decena+','+j.numero+','+parseFloat(j.monto).toFixed(2)+','+(g==='SI'?(parseFloat(j.monto)*PAGO).toFixed(2):'0')+','+g+','+(j.hora||'')+'\n';}).join('');};if(tipo==='dia'){const f=document.getElementById('EFD').value;csv+=await rows(f);nombre+='-'+f;}else if(tipo==='semana'){const ref=document.getElementById('EFS').value;const dt=new Date(ref+'T12:00:00');const lu=new Date(dt);lu.setDate(dt.getDate()-((dt.getDay()+6)%7));for(let i=0;i<7;i++){const d2=new Date(lu);d2.setDate(lu.getDate()+i);csv+=await rows(d2.toISOString().substring(0,10));}nombre+='-'+ref;}else{const mes=document.getElementById('EFM').value;const {data:jM}=await sb.from('jugadas').select('fecha').like('fecha',mes+'%').eq('banquero_id',bIdDL);const ff=[...new Set((jM||[]).map(j=>j.fecha))];for(const f of ff)csv+=await rows(f);nombre+='-'+mes;}  if(tipo==='recolector'){
     const rid=document.getElementById('EFR').value;
     if(!rid){toast('Selecciona un recolector',true);return;}
     const per=document.getElementById('EFRP').value;
     const mes=document.getElementById('EFRM').value;
-    let qR=sb.from('jugadas').select('*').eq('recolector_id',rid).not('dia_cierre','is',null).order('dia_cierre',{ascending:true}).limit(5000);
+    const bIdRC=banqueroId||(await getBID())||'';
+    let qR=sb.from('jugadas').select('*').eq('recolector_id',rid).eq('banquero_id',bIdRC).not('dia_cierre','is',null).order('dia_cierre',{ascending:true}).limit(5000);
     if(per==='mes'&&mes)qR=qR.like('dia_cierre',mes+'%');
     const {data:jjR}=await qR;
-    const {data:recD}=await sb.schema('banca').from('recolectores').select('nombre,username').eq('id',rid).maybeSingle();
+    // El recolector debe ser de la propia banca: filtro defensivo.
+    const {data:recD}=await sb.schema('banca').from('recolectores').select('nombre,username').eq('id',rid).eq('banquero_id',bIdRC).maybeSingle();
     nombre='jugadas-'+(recD?.nombre||recD?.username||'recolector');
     csv='Fecha,Cliente,Pick,Decena,Numero,Monto CUP,Premio si gana,Gano,Hora\n';
     if(jjR&&jjR.length){
       const fechasR=[...new Set(jjR.map(j=>j.dia_cierre))];
-      const {data:resR}=await sb.from('resultados').select('fecha,pick').in('fecha',fechasR);
+      const bIdCSV=banqueroId||(await getBID())||'';
+      const {data:resR}=await sb.from('resultados').select('fecha,pick').in('fecha',fechasR).eq('banquero_id',bIdCSV);
       const rmR={};(resR||[]).forEach(r=>{rmR[r.fecha]=r.pick;});
       csv+=jjR.map(j=>{const g=rmR[j.dia_cierre]&&j.pick===rmR[j.dia_cierre]?'SI':'NO';return j.dia_cierre+','+j.cliente+','+j.pick+','+j.decena+','+j.numero+','+parseFloat(j.monto).toFixed(2)+','+(g==='SI'?(parseFloat(j.monto)*PAGO).toFixed(2):'0')+','+g+','+(j.hora||'')+'\n';}).join('');
     }
@@ -4211,7 +4293,7 @@ async function descartarHuerfanasPostCierre(fecha){
   if(!huerfanas||!huerfanas.length){document.getElementById('ALERTA-HUERFANAS')?.remove();return;}
   if(!confirm(`¿Descartar ${huerfanas.length} jugada${huerfanas.length>1?'s':''} tardías? Se eliminarán de la base de datos.\n\nAsegúrate de haber ajustado el fondo manualmente si había ganadoras.`))return;
   const ids=huerfanas.map(j=>j.id);
-  await sb.from('jugadas').delete().in('id',ids);
+  await sb.from('jugadas').delete().in('id',ids).eq('banquero_id',bIdRCH||'');
   document.getElementById('ALERTA-HUERFANAS')?.remove();
   toast('✓ '+huerfanas.length+' jugada'+(huerfanas.length>1?'s':'')+' descartadas');
 }
@@ -4219,7 +4301,9 @@ async function descartarHuerfanasPostCierre(fecha){
 async function verificarHuerfanas(){
   if(rol!=='admin')return;
   const hoy=etHoy();
-  const {data}=await sb.from('jugadas').select('fecha,cliente,monto').is('dia_cierre',null).lt('fecha',hoy);
+  const bIdVH=await getBID();
+  if(!bIdVH)return; // sin banca conocida no listamos huérfanas (no leer cross-banca)
+  const {data}=await sb.from('jugadas').select('fecha,cliente,monto').is('dia_cierre',null).lt('fecha',hoy).eq('banquero_id',bIdVH);
   if(!data||!data.length)return;
   const porFecha={};data.forEach(j=>{if(!porFecha[j.fecha])porFecha[j.fecha]=[];porFecha[j.fecha].push(j);});
   const fechas=Object.keys(porFecha).sort();huerfanasFecha=fechas;
@@ -4231,7 +4315,7 @@ async function verificarHuerfanas(){
 }
 function cerrarModalHuerfanas(){document.getElementById('MOD-huerfanas').style.display='none';}
 function abrirResultadoDia(){cerrarModalHuerfanas();if(huerfanasFecha&&huerfanasFecha.length>0)fechaResultadoActiva=huerfanasFecha[0];const tabRes=document.querySelector('.TB[onclick*="resultado"]');if(tabRes)tabRes.click();}
-async function descartarHuerfanas(){if(!huerfanasFecha||!huerfanasFecha.length)return;if(!confirm('¿Descartar jugadas sin cerrar de '+huerfanasFecha.length+' día(s)?'))return;for(const f of huerfanasFecha)await sb.from('jugadas').delete().eq('fecha',f).is('dia_cierre',null);cerrarModalHuerfanas();toast('Jugadas descartadas');await loadJ();}
+async function descartarHuerfanas(){if(!huerfanasFecha||!huerfanasFecha.length)return;if(!confirm('¿Descartar jugadas sin cerrar de '+huerfanasFecha.length+' día(s)?'))return;const bIdDH=await getBID();if(!bIdDH){toast('Sesión sin banquero',true);return;}for(const f of huerfanasFecha)await sb.from('jugadas').delete().eq('fecha',f).is('dia_cierre',null).eq('banquero_id',bIdDH);cerrarModalHuerfanas();toast('Jugadas descartadas');await loadJ();}
 
 // ── HELPER: qué recolector usar al insertar jugadas ──
 function getRecIdParaInsertar(){
@@ -4853,6 +4937,7 @@ async function guardarPago(){
 const CORTE_DIA  = {h:13, m:30};
 const CORTE_NOCHE= {h:21, m:35};
 let _registroDesbloqueado=false;
+let _registroDesbloqueadoRazon=null; // razón del corte al momento de desbloquear (anti-trampa: si cambia la razón, se invalida)
 
 function horaActualET(){
   const ahora=new Date().toLocaleString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:false});
@@ -4860,8 +4945,10 @@ function horaActualET(){
   return{h:parseInt(hh),m:parseInt(mm)};
 }
 
-function estaEnCorte(){
-  if(_registroDesbloqueado)return false;
+function estaEnCorte(opts){
+  // opts.ignoreOverride=true → calcula el corte REAL ignorando el desbloqueo manual.
+  // Sin opts: comportamiento histórico (respeta el desbloqueo del admin).
+  if(!(opts&&opts.ignoreOverride)&&_registroDesbloqueado)return false;
   const{h,m}=horaActualET();
   const mins=h*60+m;
   const corteDia =CORTE_DIA.h *60+CORTE_DIA.m;
@@ -4887,10 +4974,22 @@ function estaEnCorte(){
 }
 
 function verificarCorteRegistro(){
+  // Sin sesión iniciada no hay registro que custodiar — evita trabajo y errores en pantalla de login.
+  if(!rol)return;
   const banner=document.getElementById('CORTE-BANNER');
   const contenido=document.getElementById('REGISTRO-CONTENIDO');
   if(!banner||!contenido)return;
-  const corte=estaEnCorte();
+  // Corte REAL ignorando el override del admin — para saber si el desbloqueo sigue válido.
+  const corteReal=estaEnCorte({ignoreOverride:true});
+  // Invalidar el desbloqueo si: (a) ya no hay corte (resultado aplicado), o
+  // (b) cambió la razón del corte (ej. dia_espera → noche): un nuevo corte
+  // exige un nuevo desbloqueo explícito.
+  if(_registroDesbloqueado&&(!corteReal||corteReal!==_registroDesbloqueadoRazon)){
+    _registroDesbloqueado=false;
+    _registroDesbloqueadoRazon=null;
+  }
+  // Corte efectivo para la UI (respeta el desbloqueo si sigue válido).
+  const corte=_registroDesbloqueado?false:corteReal;
   if(corte==='noche_disponible'){
     // Día cerrado pero noche abierta → informar sin bloquear
     banner.style.display='block';
@@ -4923,17 +5022,23 @@ function verificarCorteRegistro(){
     banner.style.display='none';
     contenido.style.opacity='1';
     contenido.style.pointerEvents='auto';
-    _registroDesbloqueado=false;
+    // No se resetea _registroDesbloqueado aquí; lo hace el bloque de arriba
+    // cuando termina el corte real o cambia su razón.
   }
 }
 
 function desbloquearRegistro(){
+  // Anti-trampa: solo el admin puede desbloquear (el botón se renderiza solo si rol==='admin').
+  if(rol!=='admin')return;
+  // Memorizar la razón del corte ACTUAL: el desbloqueo solo aplica a ese corte.
+  // Si después cambia (ej. dia_espera→noche), se invalida y se vuelve a bloquear.
+  _registroDesbloqueadoRazon=estaEnCorte({ignoreOverride:true})||null;
   _registroDesbloqueado=true;
   const banner=document.getElementById('CORTE-BANNER');
   const contenido=document.getElementById('REGISTRO-CONTENIDO');
   if(banner)banner.style.display='none';
   if(contenido){contenido.style.opacity='1';contenido.style.pointerEvents='auto';}
-  toast('🔓 Registro desbloqueado temporalmente');
+  toast('🔓 Registro desbloqueado (vigente hasta el próximo cambio de corte)');
 }
 
 // Verificar corte cada minuto y al cargar
