@@ -3261,11 +3261,19 @@ async function loadGR(){
   // Historial acumulado desde jugadas cerradas
   const div=document.getElementById('LGR');
   if(!myRec){div.innerHTML='<div class="EM"><span class="bg">💰</span>Sin datos</div>';return;}
-  const esLourdes=myRec==='9c9cf2ae-8ea6-4944-8bb1-eeeeb6cd5436';
-  const [{data:rows2,error:e2},{data:manuales}]=await Promise.all([
+  // Acumulados manuales (Agregar Comisión Anterior):
+  //  - El recolector está autenticado por token (no Supabase-Auth) → query directa a
+  //    public.ganancias_recolector devuelve 401 por RLS (lo trata como anon).
+  //  - Por eso va por RPC banca.acumulados_recolector(p_token) (SECURITY DEFINER, valida
+  //    token y filtra por recolector_id + banquero_id ahí dentro).
+  const manualesQuery = recToken
+    ? sb.schema('banca').rpc('acumulados_recolector',{p_token:recToken})
+    : Promise.resolve({data:[]});
+  const [{data:rows2,error:e2},{data:manuales,error:eM}]=await Promise.all([
     sb.rpc('historial_recolector',{p_recolector_id:myRec}),
-    esLourdes?sb.from('ganancias_recolector').select('*').neq('tipo','cierre_diario').order('created_at',{ascending:true}):Promise.resolve({data:[]})
+    manualesQuery
   ]);
+  if(eM&&_tokenMurio(eM))return;
   const sorted=[...(rows2||[])].sort((a,b)=>a.dia_cierre.localeCompare(b.dia_cierre));
   // Obtener sesión de cada cierre para badges 🌅 Día / 🌙 Noche
   let sesionMapGR={};
