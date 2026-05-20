@@ -1438,6 +1438,10 @@ function logout(){
   if(autoFetchTimer){clearInterval(autoFetchTimer);autoFetchTimer=null;}
   // Limpiar scheduler de cierre auto (corría cada 60s aun después de logout)
   if(typeof _schedulerInterval!=='undefined'&&_schedulerInterval){clearInterval(_schedulerInterval);_schedulerInterval=null;}
+  // ANTI-TRAMPA: resetear el override de corte del admin (si no, al loguearse
+  // un recolector en el mismo navegador, hereda el desbloqueo y puede registrar
+  // durante el corte hasta el próximo tick de verificarCorteRegistro).
+  try{_registroDesbloqueado=false;_registroDesbloqueadoRazon=null;}catch{}
   // Limpiar sesión Supabase-Auth (JWT del admin) para que el próximo usuario no la herede
   try{sb.auth.signOut({scope:'local'});}catch{}
   rol=null;banqueroId=null;recId=null;recCom=15;recToken=null;dS();
@@ -4981,6 +4985,13 @@ function verificarCorteRegistro(){
   if(!banner||!contenido)return;
   // Corte REAL ignorando el override del admin — para saber si el desbloqueo sigue válido.
   const corteReal=estaEnCorte({ignoreOverride:true});
+  // ANTI-TRAMPA defensa #2: el desbloqueo SOLO existe para el admin. Si por cualquier
+  // razón el flag estuviera en true cuando entra un recolector (logout que no lo limpió,
+  // race, lo que sea), forzarlo a false acá. El recolector NUNCA debe ver desbloqueado.
+  if(rol!=='admin'&&_registroDesbloqueado){
+    _registroDesbloqueado=false;
+    _registroDesbloqueadoRazon=null;
+  }
   // Invalidar el desbloqueo si: (a) ya no hay corte (resultado aplicado), o
   // (b) cambió la razón del corte (ej. dia_espera → noche): un nuevo corte
   // exige un nuevo desbloqueo explícito.
