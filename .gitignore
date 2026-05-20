@@ -1,0 +1,15 @@
+# Claude Code permisos locales (crece con cada permiso aprobado, no debe versionarse).
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Logs y temporales
+*.log
+node_modules/
+.tmp/
+*.bak
