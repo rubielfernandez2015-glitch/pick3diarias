@@ -3282,11 +3282,23 @@ async function togHistRec(did,cid,fecha,pick){
   const {data:jj,error:eJJ}=await sb.schema('banca').rpc('recolector_jugadas_dia',{p_token:recToken,p_fecha:fecha});
   if(eJJ){if(_tokenMurio(eJJ))return;d.innerHTML='<div style="font-size:11px;color:var(--rc);text-align:center;padding:8px;">Error al cargar</div>';return;}
   const jDia=jj||[];
-  // Resultados de AMBAS sesiones del día (el recolector lee resultados directo)
-  const bIdHR=banqueroId||localStorage.getItem('b_recbid')||'';
+  // Resultados de AMBAS sesiones del día. ETAPA 2: recolector via RPC con
+  // fallback al SELECT directo. La RPC valida con token y filtra por banca.
   const resPorSes={};
   try{
-    const {data:ress}=await sb.from('resultados').select('sesion,numero,pick').eq('fecha',fecha).eq('banquero_id',bIdHR);
+    let ress=null, rpcOK=false;
+    if(recToken){
+      try{
+        const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:[fecha],p_sesiones:null});
+        if(error){if(_tokenMurio(error))return;}
+        else{ress=data;rpcOK=true;}
+      }catch{/* rpcOK queda false → fallback */}
+    }
+    if(!rpcOK){
+      const bIdHR=banqueroId||localStorage.getItem('b_recbid')||'';
+      const {data}=await sb.from('resultados').select('sesion,numero,pick').eq('fecha',fecha).eq('banquero_id',bIdHR);
+      ress=data;
+    }
     (ress||[]).forEach(r=>{resPorSes[r.sesion||'dia']={numero:r.numero,pick:r.pick};});
   }catch{}
   const fmtJ=(j,esG)=>'<div class="HDJ'+(esG?' gan':'')+'"><span class="hpk">'+j.pick+'</span><span class="hcl">'+esc(j.cliente)+'</span><div style="text-align:right;"><div class="hmn">'+parseFloat(j.monto).toFixed(2)+' CUP</div>'+(esG?'<div class="hpr" style="color:var(--vc);">Ganó: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>':'<div class="hpr">Premio: '+fx(parseFloat(j.monto)*PAGO).toFixed(2)+' CUP</div>')+'</div></div>';
