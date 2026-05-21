@@ -2608,7 +2608,10 @@ async function verificarHuerfanasPostCierre(){
   // Verificar si el día está cerrado
   const bIdH2=await getBID();if(!bIdH2)return;
   // Solo aplica para cierre de sesión DÍA
-  const {data:res}=await sb.from('resultados').select('numero,pick,created_at').eq('fecha',hoy).eq('sesion','dia').eq('banquero_id',bIdH2).maybeSingle();
+  // OJO: la tabla public.resultados usa 'ts' (no 'created_at'). Usar el nombre
+  // equivocado devolvia HTTP 400 y la deteccion de huerfanas post-cierre nunca
+  // funciono — la query fallaba antes de llegar al resto de la logica.
+  const {data:res}=await sb.from('resultados').select('numero,pick,ts').eq('fecha',hoy).eq('sesion','dia').eq('banquero_id',bIdH2).maybeSingle();
   if(!res)return;
   // Si hay noche activa → verificar en Supabase si noche ya cerró
   // Usar _RC (cargado de DB) para no depender solo de localStorage b_hay_noche que puede no estar seteado
@@ -2618,7 +2621,7 @@ async function verificarHuerfanasPostCierre(){
     if(!resN)return; // Noche abierta → jugadas son legítimas de noche, NO son huérfanas
   }
   // Hora del cierre en minutos ET
-  const cET=new Date(res.created_at).toLocaleString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:false});
+  const cET=new Date(res.ts).toLocaleString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:false});
   const [cH,cM]=cET.split(':').map(Number);const cMin=cH*60+cM;
   // Jugadas pendientes
   const {data:todasP}=await sb.from('jugadas').select('id,cliente,pick,monto,hora,created_at').eq('fecha',hoy).eq('banquero_id',bIdH2).is('dia_cierre',null);
