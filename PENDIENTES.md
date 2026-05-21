@@ -118,8 +118,20 @@ Fixes:
 
 Validado en localhost: cambio + logout + login con nueva clave = entra. Restauracion OK. Mensaje en login se muestra/oculta correctamente al alternar roles.
 
-### #3 — Migraciones SQL versionadas en repo (~2 hs)
-**Por qué:** hoy todo el schema/RPCs/policies/publication vive solo en Supabase. Si la BD se corrompe o tenés que recrearla en otra cuenta, perdés todo. Crear `/migrations` con snapshot del estado actual + scripts numerados para los próximos cambios.
+### #3 — Migraciones SQL versionadas en repo — ✅ CERRADA 2026-05-21
+
+Creada carpeta `/migrations/` con baseline completo del estado actual de Supabase. Antes el schema/RPCs/policies/publication vivían solo en el dashboard de Supabase — sin disaster recovery posible. Ahora todo está versionado en el repo.
+
+Archivos:
+- `README.md` — explicación, tabla de RPCs, instrucciones de recovery.
+- `00_baseline_functions.sql` — 25 funciones (RPCs + helpers + triggers) con sus GRANT EXECUTE.
+- `00_baseline_policies.sql` — RLS policies de 11 tablas. Marca como ⚠️ DEPRECATED las 3 policies "acceso total" legacy.
+- `00_baseline_grants.sql` — REVOKEs aplicados (Etapa 2 + Auditoría) y recomendaciones de hardening adicional.
+- `00_baseline_realtime.sql` — ALTER PUBLICATION + REPLICA IDENTITY FULL.
+
+Para cambios futuros: archivos numerados `NNN_descripcion.sql`. Patrón documentado en README.
+
+Commit `115cc42`.
 
 ### #4 — Hash bcrypt + sal en password recolector (DIFERIDO post-25-may)
 Refactor grande del flow de auth recolector. Para 5-20 banqueros de confianza el SHA-256 actual es aceptable; sería must si vas a 100+ usuarios públicos.

@@ -13,3 +13,8 @@ Thumbs.db
 node_modules/
 .tmp/
 *.bak
+
+# Workspaces de IDE personales
+*.code-workspace
+.vscode/
+.idea/
