@@ -1201,6 +1201,11 @@ function showTab(id,e){
   document.querySelectorAll('.PNL').forEach(p=>p.classList.remove('on'));
   if(e&&e.target)e.target.classList.add('on');
   document.getElementById('P-'+id).classList.add('on');
+  // Reset del panel "Compartir/Copiar" del Resumen: si quedo desplegado y el
+  // usuario cambia de tab, al volver debe arrancar colapsado (sino sigue
+  // mostrando vista previa vieja hasta F5).
+  const sharePrev=document.getElementById('RES-share-preview');
+  if(sharePrev)sharePrev.style.display='none';
   _clearStaleTabRec(id);
   if(id==='resultado'){vistaR();cargarInfoModoResultado();setTimeout(()=>{const el=document.getElementById('IRES');if(el){el.select();el.focus();}},300);}
   if(id==='historial')loadHist();
@@ -1904,6 +1909,10 @@ async function resyncEstado(){
   _resyncBusy=true;_lastResync=Date.now();
   try{await detectarSesionActiva();}catch{}        // refresca banner + corte
   try{await loadJ();}catch{}                       // refresca registro (DCBX + pendientes)
+  // Si el usuario esta en el tab Resultado al volver, refrescar tambien la vista
+  // (si revirtieron el cierre en otra pestaña, sin esto el numero viejo queda en
+  // el input #IRES hasta que el usuario cambie de tab manualmente).
+  try{if(document.getElementById('P-resultado')?.classList.contains('on'))await vistaR();}catch{}
   _resyncBusy=false;
 }
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resyncEstado();});
@@ -2957,7 +2966,11 @@ async function loadResG(){
     return;
   }
 
+  // Sin resultado en sesión día tampoco: ocultar resumen Y limpiar el input
+  // (si previamente habia un cierre que se revirtio en otra pestaña, el numero
+  // viejo se quedaba pegado hasta el proximo cambio de tab).
   document.getElementById('BRES').style.display='none';
+  document.getElementById('IRES').value='';
 }
 
 async function showResA(num,pick,jj,gan,rec,prem,com,ganB,fechaCierre,sesion){

@@ -8,21 +8,17 @@
 
 ## 🟢 Quick wins (sesión corta, ~30 min en total)
 
-### 1. §6 Re-sync entre 2 pestañas
-**Esfuerzo:** 5 min de prueba. **Riesgo:** ninguno (el código ya está).
+### 1. §6 Re-sync entre 2 pestañas — ✅ VALIDADO 2026-05-21
 
-Probar que el handler `visibilitychange`/`focus`/`pageshow` (commit `47d9f10`) sigue funcionando bien tras los cambios de Etapa 4:
+Funciona cross-pestaña y cross-dispositivo (PWA): tocar Resultado en una pestaña ya muestra el cambio sin F5; revertir desde la app móvil refleja en pestaña web casi al instante.
 
-- [ ] Abrir 2 pestañas como admin. Aplicar cierre en pestaña B → volver a pestaña A → banner/registro se actualizan solos sin F5.
-- [ ] Cerrar todas las pestañas, abrir nueva → carga estado correcto.
-- [ ] PWA en background 5 min → traer al frente → re-sync.
+### 2. UX polish — estado local que no se resetea al cambiar contexto — ✅ HECHO 2026-05-21
+**Triple fix aplicado y validado en localhost (cross-pestaña):**
+- `showTab` ahora colapsa `#RES-share-preview` al cambiar de tab.
+- `loadResG` limpia `#IRES.value` también cuando no hay resultado en sesión día (antes solo en noche).
+- `resyncEstado` llama `vistaR()` si el tab activo es Resultado (refresca sin esperar cambio de tab manual).
 
-### 2. UX: panel "Copiar" del Resumen no colapsa al cambiar tab
-**Esfuerzo:** ~15 min de código + prueba. **Riesgo:** bajo (UX puro, no toca cálculo).
-
-Bug reportado 2026-05-20: en tab Resumen, expandir panel "copiar" → copiar texto → cambiar de tab y volver → el panel sigue desplegado hasta F5.
-
-**Fix probable:** en `showTab`, si se sale del tab Resumen, resetear el `display:none` del panel desplegado. O bien, al entrar al tab Resumen, colapsar el panel por defecto.
+Residual observado por usuario: cuando revierte un cierre desde la web, la PWA en background tarda en reflejarlo hasta que vuelve al foco. Es esperable (sin `visibilitychange` no hay disparo). Solución limpia → ver item 4 abajo (Realtime).
 
 ### 3. §1 Aislamiento multi-banca con signup nuevo
 **Esfuerzo:** ~10 min + cleanup. **Riesgo:** bajo (crear + borrar banca de prueba).
@@ -32,6 +28,24 @@ Bug reportado 2026-05-20: en tab Resumen, expandir panel "copiar" → copiar tex
 - [ ] Crear banca temporal con email descartable (signup nuevo).
 - [ ] Login con esa banca → NO debe ver datos de Rubiel (jugadas, clientes, resultados, fondo).
 - [ ] Borrar al final con DO block scoped (mismo patrón usado en Etapa 3).
+
+---
+
+### 4. Realtime subscription a `resultados` (notificaciones server → cliente sin polling)
+**Esfuerzo:** ~45 min. **Riesgo:** bajo (canal aditivo, no cambia lógica).
+
+Reportado 2026-05-21: al revertir un cierre desde la web, la PWA en background tarda en reflejarlo hasta que vuelve al foco (sin `visibilitychange` no hay disparo). Workaround actual: actualizar manualmente la PWA.
+
+**Solución:** suscribirse a cambios de `public.resultados` filtrados por `banquero_id` via Supabase Realtime. Cualquier INSERT/UPDATE/DELETE → `resyncEstado()` automático sin necesidad de foco/polling. La app ya tiene una variable `rts` declarada (ver `logout` que la limpia); falta cablear la suscripción en `login` y en el handler.
+
+```js
+rts = sb.channel('resultados-'+banqueroId)
+  .on('postgres_changes', {event:'*', schema:'public', table:'resultados',
+       filter:'banquero_id=eq.'+banqueroId}, () => resyncEstado())
+  .subscribe();
+```
+
+Beneficio extra: también se reflejaría en tiempo real cualquier cambio hecho desde otra pestaña/dispositivo sin esperar al `visibilitychange`.
 
 ---
 
