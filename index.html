@@ -3422,9 +3422,20 @@ async function loadGR(){
   const recH=fx(jjHoy.reduce((s,j)=>s+parseFloat(j.monto),0));
   const comH=fx(recH*(myComP/100));
 
-  // Resultado de la sesión actual
-  const {data:resH}=await sb.from('resultados').select('pick,sesion')
-    .eq('fecha',hoy).eq('sesion',sesionActual).maybeSingle();
+  // Resultado de la sesión actual. ETAPA 2 (recolector): RPC con fallback.
+  let resH=null, rpcOKresH=false;
+  if(rol==='recolector'&&recToken){
+    try{
+      const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:[hoy],p_sesiones:[sesionActual]});
+      if(error){if(_tokenMurio(error))return;}
+      else{resH=(data&&data[0])||null;rpcOKresH=true;}
+    }catch{/* rpcOKresH queda false → fallback */}
+  }
+  if(!rpcOKresH){
+    const {data}=await sb.from('resultados').select('pick,sesion')
+      .eq('fecha',hoy).eq('sesion',sesionActual).maybeSingle();
+    resH=data;
+  }
   const pickH=resH?.pick;
   const ganH=pickH?jjCerradas.filter(j=>j.pick===pickH):[];
   const premH=fx(ganH.reduce((s,j)=>s+parseFloat(j.monto)*PAGO,0));
@@ -3460,12 +3471,24 @@ async function loadGR(){
   try{
     if(sorted.length){
       const fechasGR=sorted.map(r=>r.dia_cierre);
-      const bIdGR=banqueroId||localStorage.getItem('b_recbid')||'';
-      // Sin banca conocida NO leemos cross-banca.
-      if(bIdGR){
-        const{data:sesGR}=await sb.from('resultados').select('fecha,sesion').in('fecha',fechasGR).eq('banquero_id',bIdGR);
-        (sesGR||[]).forEach(s=>{if(!sesionMapGR[s.fecha])sesionMapGR[s.fecha]=s.sesion;});
+      // ETAPA 2: RPC con fallback. Si la RPC falla, mantener chequeo de
+      // bIdGR como anti-fuga.
+      let sesGR=null, rpcOKsesGR=false;
+      if(rol==='recolector'&&recToken){
+        try{
+          const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:fechasGR,p_sesiones:null});
+          if(error){if(_tokenMurio(error))return;}
+          else{sesGR=data;rpcOKsesGR=true;}
+        }catch{/* fallback */}
       }
+      if(!rpcOKsesGR){
+        const bIdGR=banqueroId||localStorage.getItem('b_recbid')||'';
+        if(bIdGR){
+          const{data}=await sb.from('resultados').select('fecha,sesion').in('fecha',fechasGR).eq('banquero_id',bIdGR);
+          sesGR=data;
+        }
+      }
+      (sesGR||[]).forEach(s=>{if(!sesionMapGR[s.fecha])sesionMapGR[s.fecha]=s.sesion;});
     }
   }catch(e){console.warn('sesionMapGR:',e);}
   let totalAcum=0;
