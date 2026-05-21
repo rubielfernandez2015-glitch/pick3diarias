@@ -20,14 +20,11 @@ Funciona cross-pestaña y cross-dispositivo (PWA): tocar Resultado en una pesta�
 
 Residual observado por usuario: cuando revierte un cierre desde la web, la PWA en background tarda en reflejarlo hasta que vuelve al foco. Es esperable (sin `visibilitychange` no hay disparo). Solución limpia → ver item 4 abajo (Realtime).
 
-### 3. §1 Aislamiento multi-banca con signup nuevo
-**Esfuerzo:** ~10 min + cleanup. **Riesgo:** bajo (crear + borrar banca de prueba).
+### 3. §1 Aislamiento multi-banca con signup nuevo — ✅ VALIDADO 2026-05-21
 
-Última prueba del checklist sin tachar. Confirma que es realmente multi-banquero seguro:
+Banca de prueba `BancaTest`/`55SMP` (uid `f3ffb478-...`) creada con `rubielfernandez2015+aisla@gmail.com`. Recorridos los 9 tabs admin: TODOS vacíos, cero data cruzada de Rubiel. Cleanup atómico ejecutado en 8 pasos (banca + public + auth.users); verificación post-cleanup confirma que solo queda Rubiel/D3MYX. La app es realmente multi-banquero segura.
 
-- [ ] Crear banca temporal con email descartable (signup nuevo).
-- [ ] Login con esa banca → NO debe ver datos de Rubiel (jugadas, clientes, resultados, fondo).
-- [ ] Borrar al final con DO block scoped (mismo patrón usado en Etapa 3).
+**Bug encontrado al validar:** `verificarHuerfanasPostCierre` usaba `created_at` en `public.resultados` cuando la columna se llama `ts` → HTTP 400 silencioso, la detección de huérfanas post-cierre nunca funcionó. Fix commit `8a30b22`. Mismo patrón a buscar en otros lugares si reaparece.
 
 ---
 
