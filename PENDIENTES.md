@@ -133,6 +133,14 @@ Para cambios futuros: archivos numerados `NNN_descripcion.sql`. Patrón document
 
 Commit `115cc42`.
 
+### Hardening bonus — ✅ CERRADO 2026-05-21
+
+Tras los 3 items principales, se ejecutaron 3 mejoras documentadas en `migrations/00_baseline_*.sql`:
+
+- **DROP de 3 policies "acceso total" legacy** (clientes, limites_numeros, resultados): eran inertes por los REVOKEs de Etapa 2 pero peligrosas si alguien re-grant a anon.
+- **REVOKE ALL FROM anon en 4 tablas admin-only**: banquero_ajustes, fondo_movimientos, limites_numeros, comision_historial. Defensa en profundidad (antes solo RLS las cubría).
+- **REVOKE ALL FROM anon en ganancias_recolector** + eliminación del form "Agregar Comisión Anterior" del recolector que estaba silent-broken. Si se necesita agregar acumulado manual: SQL directo. Commit `e67518c`.
+
 ### #4 — Hash bcrypt + sal en password recolector (DIFERIDO post-25-may)
 Refactor grande del flow de auth recolector. Para 5-20 banqueros de confianza el SHA-256 actual es aceptable; sería must si vas a 100+ usuarios públicos.
 
