@@ -3169,12 +3169,26 @@ async function loadHist(){
     let numsPorFechaR={};
     try{
       if(fechasHistR.length){
-        const bIdHR=banqueroId||localStorage.getItem('b_recbid')||'';
-        // Sin banca conocida NO leemos cross-banca: preferimos vacío a fuga.
-        if(bIdHR){
-          const{data:sesHistR}=await sb.from('resultados').select('fecha,sesion,numero').in('fecha',fechasHistR).eq('banquero_id',bIdHR);
-          (sesHistR||[]).forEach(s=>{(numsPorFechaR[s.fecha]=numsPorFechaR[s.fecha]||[]).push({sesion:s.sesion||'dia',numero:s.numero});});
+        // ETAPA 2: RPC con fallback. RPC trae TODAS las sesiones de las fechas
+        // pasadas (p_sesiones:null = ambas) filtradas por banca via token. Si
+        // la RPC falla, caemos al SELECT directo manteniendo el chequeo de
+        // bIdHR como anti-fuga.
+        let sesHistR=null, rpcOK=false;
+        if(recToken){
+          try{
+            const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:fechasHistR,p_sesiones:null});
+            if(error){if(_tokenMurio(error))return;}
+            else{sesHistR=data;rpcOK=true;}
+          }catch{/* rpcOK queda false → fallback */}
         }
+        if(!rpcOK){
+          const bIdHR=banqueroId||localStorage.getItem('b_recbid')||'';
+          if(bIdHR){
+            const{data}=await sb.from('resultados').select('fecha,sesion,numero').in('fecha',fechasHistR).eq('banquero_id',bIdHR);
+            sesHistR=data;
+          }
+        }
+        (sesHistR||[]).forEach(s=>{(numsPorFechaR[s.fecha]=numsPorFechaR[s.fecha]||[]).push({sesion:s.sesion||'dia',numero:s.numero});});
       }
     }catch(e){console.warn('numsPorFechaR:',e);}
     // El RPC devuelve UNA fila por cierre y repite total_rec/total_jugadas/comisión del DÍA en
