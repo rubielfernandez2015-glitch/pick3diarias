@@ -246,6 +246,11 @@ textarea{resize:vertical;min-height:50px;}
     <div id="link-olvide" style="display:none;text-align:center;margin-top:6px;">
       <span onclick="mostrarOlvide()" style="font-size:11px;color:var(--t3);cursor:pointer;text-decoration:underline;">¿Olvidaste tu contraseña?</span>
     </div>
+    <div id="link-olvide-rec" style="display:none;text-align:center;margin-top:8px;font-size:10px;color:var(--t3);line-height:1.5;">
+      ¿Olvidaste tu contraseña?<br>
+      Pídele al banquero que la resetee desde<br>
+      <em style="color:var(--dc);">Equipo → tu nombre → 🔑 Pass</em>
+    </div>
   </div>
 </div>
 
@@ -1243,6 +1248,8 @@ function selR(r){
   if(r==='recolector'){const _c=document.getElementById('IP-codigo');if(_c&&!_c.value)_c.value=localStorage.getItem('b_reccod')||'';}
   document.getElementById('link-registro').style.display=r==='admin'?'block':'none';
   document.getElementById('link-olvide').style.display=r==='admin'?'block':'none';
+  const lor=document.getElementById('link-olvide-rec');
+  if(lor)lor.style.display=r==='recolector'?'block':'none';
   document.getElementById('LE').style.display='none';
   document.getElementById('IP0').value='';
 }
