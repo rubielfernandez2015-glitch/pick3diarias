@@ -44,19 +44,49 @@ Validado en vivo: cierre/revertir en pestaña A → pestaña B y PWA en otro dis
 
 ---
 
-## 🟡 v1.1 — Etapa 2: endurecer lecturas anon
+## 🟡 v1.1 — Etapa 2: endurecer lecturas anon — ✅ FASES A-G COMPLETAS 2026-05-21
 
-**Esfuerzo:** ~2.5 hs dedicadas. **Riesgo:** medio (reescribir 8 sitios en `index.html`, requiere validación cuidadosa).
+**Estado:** cliente recolector ya NO depende de SELECT directo a `public.resultados`/`public.clientes` salvo como fallback de emergencia. Falta solo el REVOKE final (diferido por seguridad).
 
-Plan completo en `PLAN_ETAPA2_endurecer_anon.md`.
+### ✅ Fase A — RPCs creadas
+- `banca.recolector_resultados(p_token uuid, p_fechas text[], p_sesiones text[])` — SETOF resultados, valida token + filtra por banca.
+- `banca.recolector_clientes(p_token uuid, p_q text, p_limit int)` — autocompletado con LIKE, excluye `__FONDO*__`.
+- Patrón calcado de `banca.acumulados_recolector` (existente en prod, funciona).
 
-Resumen:
-- 2 RPCs nuevas: `banca.recolector_resultados(p_token, p_fechas, p_sesiones)` y `banca.recolector_clientes(p_token, p_q)`.
-- Reescribir 8 sitios donde el recolector lee directo `public.resultados`/`public.clientes`.
-- `REVOKE SELECT ON public.resultados/clientes FROM anon` al final.
-- Validar en localhost antes de revocar.
+### ✅ Fase B — RPCs validadas con queries directas
+- count=28, filtros por fecha OK, autocompletado P→Pedro/Piti/Profe OK, token inválido → `TOKEN_INVALIDO`.
 
-**Mitigación actual** (por qué se difirió): la `publishable key` no expone `service_role`; lo único leíble cross-banca son nombres de clientes y números/picks de otras bancas vía API si alguien conoce el endpoint exacto. **Sin riesgo financiero** (la tabla `jugadas` ya está aislada por banca).
+### ✅ Fases C-G — 7 sitios cliente reescritos con fallback
+Cada sitio: si `rol==='recolector'&&recToken` → intenta RPC, si falla cae al SELECT directo (que sigue funcionando hoy). Admin no se tocó. Flag `rpcOK` explícito para evitar fallback redundante.
+
+| Sitio | Función | Commit |
+|---|---|---|
+| 1 | `doAC` autocomplete clientes | `8b00b71` |
+| 2 | `isSesionCerrada` hot-path | `64b2a2e` |
+| 3 | `loadResR` resultado del día | `081a56f` |
+| 4 | `loadHist` rama recolector | `cc33776` |
+| 5 | `togHistRec` detalle día expandido | `0ef4f5d` |
+| 6+7 | `loadGR` (resH + sesGR) | `f23adf9` |
+
+### ⏸️ Fase H — `REVOKE SELECT FROM anon` (DIFERIDO POR SEGURIDAD)
+
+**NO ejecutar hasta validar varios días (~5-7) de uso productivo real.** El REVOKE es prácticamente irreversible-en-frío: si en producción aparece un edge case que la RPC no cubre, el fallback ya no funcionará (anon dará 401) y se perdería UX hasta hacer el GRANT de nuevo.
+
+Cuando se decida ejecutar:
+```sql
+REVOKE SELECT ON public.resultados FROM anon;
+REVOKE SELECT ON public.clientes   FROM anon;
+```
+
+Después: re-probar todos los flujos del recolector (autocomplete, resultado, historial, ganancias, expandir días). Si algún sitio rompe, identificar y arreglar antes de cerrar la fuga definitivamente.
+
+**Rollback de emergencia** (si pasara algo y hay que revertir el REVOKE):
+```sql
+GRANT SELECT ON public.resultados TO anon;
+GRANT SELECT ON public.clientes   TO anon;
+```
+
+**Mitigación actual** (por qué se podía diferir): la `publishable key` no expone `service_role`; lo único leíble cross-banca son nombres de clientes y números/picks de otras bancas vía API si alguien conoce el endpoint exacto. **Sin riesgo financiero** (`jugadas` ya está aislada por banca).
 
 ---
 
