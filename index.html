@@ -4597,9 +4597,17 @@ async function cambiarPass(){
   const showErr=(msg)=>{errDiv.textContent=msg;errDiv.style.display='block';};
   if(nueva.length<4)return showErr('La nueva contraseña debe tener al menos 4 caracteres');
   if(nueva!==confirm2)return showErr('Las contraseñas no coinciden');
+  if(!recToken)return showErr('Sin sesión activa. Vuelve a entrar.');
   const hashNueva=await hashPass(nueva);
-  const {error:errUpd}=await sb.schema('banca').from('recolectores').update({password_hash:hashNueva}).eq('id',recId);
-  if(errUpd)return showErr('Error al guardar: '+errUpd.message);
+  // RPC SECURITY DEFINER que valida el token y actualiza solo SU password.
+  // Antes hacíamos UPDATE anon directo a banca.recolectores: RLS lo bloqueaba
+  // silencioso (decia "ok" pero no escribia nada) → la clave nunca cambiaba
+  // y el recolector no podia entrar con la nueva. La RPC corrige el bug raiz.
+  const {error}=await sb.schema('banca').rpc('cambiar_password_recolector',{
+    p_token: recToken,
+    p_nueva_hash: hashNueva
+  });
+  if(error)return showErr('Error al guardar: '+(error.message||error.hint||'desconocido'));
   document.getElementById('MOD-cambiar-pass').style.display='none';
   audit('CAMBIO_PASSWORD',{username:localStorage.getItem('b_recusr')||''},recId);
   toast('✓ Contraseña cambiada correctamente');
