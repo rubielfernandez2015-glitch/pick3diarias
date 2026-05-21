@@ -663,16 +663,15 @@ textarea{resize:vertical;min-height:50px;}
       <div class="SB"><div class="SN g" id="RHC">0</div><div class="SL">Com. Hoy</div></div>
     </div>
     <div class="CB"><div class="FL">Total Acumulado de Comisiones</div><div style="font-family:'Bebas Neue';font-size:40px;color:var(--dc);" id="RACUM">0 CUP</div></div>
-    <div class="CD">
-      <div class="CT">Agregar Comisión Anterior</div>
-      <div style="font-size:11px;color:var(--t3);margin-bottom:.75rem;">Agrega comisiones ganadas antes de usar el sistema. Cada registro se agrega sin sobrescribir.</div>
-      <label>Fecha</label><input type="date" id="RGF">
-      <label>Monto de comisión ganada (CUP)</label>
-      <input type="number" id="RGCOM" placeholder="Ej: 30000" min="0" step="0.5">
-      <label>Descripción</label>
-      <textarea id="RGNOTA" placeholder="Ej: Ganancias acumuladas hasta abril 2026..."></textarea>
-      <button class="BTN BP" style="font-size:16px;" onclick="addGR()">+ Agregar</button>
-    </div>
+    <!--
+      Form "Agregar Comisión Anterior" eliminado 2026-05-21: el INSERT desde el
+      recolector iba como anon y RLS lo bloqueaba silencioso (toast decia OK pero
+      no escribia nada). Tras REVOKE ALL en ganancias_recolector el insert anon
+      directo ya no es posible. Si en el futuro se necesita agregar un acumulado
+      manual, se hace por SQL directo (patron usado para Lourdes — ver
+      MIGRACION_acumulados_legacy.sql) o se crea una RPC SECURITY DEFINER
+      banca.agregar_acumulado_recolector(p_token,...).
+    -->
     <div class="CD"><div class="CT">Historial de Comisiones</div><div id="LGR"><div class="EM"><span class="bg">💰</span>Sin registros aún</div></div></div>
   </div>
 
@@ -3527,25 +3526,12 @@ async function loadGR(){
     +itemsManuales.map(r=>'<div class="RGI"><div style="flex:1;"><div class="GF">'+r.f+' <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(201,162,39,.2);color:var(--dc);">📋 Acumulado previo</span></div><div class="GD">'+esc(r.nota)+'</div></div><div style="text-align:right;margin-right:8px;"><div class="GV p">+'+r.com.toFixed(2)+' CUP</div></div></div>').join('');
 }
 
-async function addGR(){
-  const fecha=document.getElementById('RGF').value,com=parseFloat(document.getElementById('RGCOM').value),nota=document.getElementById('RGNOTA').value.trim();
-  if(!fecha)return toast('Selecciona la fecha',true);
-  if(isNaN(com)||com<=0)return toast('Ingresa el monto de comisión',true);
-  if(!nota)return toast('La descripción es obligatoria',true);
-  // banquero_id explícito (anti-fuga multi-banca) + recolector_id si lo registra un recolector
-  // (así cada recolector ve solo sus propios acumulados; en banca con varios recolectores
-  // no se mezclan los manuales de uno con los de otro).
-  const bIdAC=banqueroId||(await getBID());
-  if(!bIdAC)return toast('Sesión sin banquero',true);
-  const recIdAC=rol==='recolector'?(recId||localStorage.getItem('b_recid')||null):null;
-  const fila={fecha,total_rec:0,comision:com,nota,tipo:'acumulado_previo',banquero_id:bIdAC};
-  if(recIdAC)fila.recolector_id=recIdAC;
-  const {error}=await sb.from('ganancias_recolector').insert(fila);
-  if(error)return toast('Error: '+error.message,true);
-  document.getElementById('RGCOM').value='';document.getElementById('RGNOTA').value='';
-  toast('✓ '+com.toFixed(2)+' CUP registrados');await loadGR();
-}
-async function delGR(id){if(!confirm('¿Eliminar?'))return;const bIdGD=banqueroId||(await getBID());if(!bIdGD){toast('Sesión sin banquero',true);return;}await sb.from('ganancias_recolector').delete().eq('id',id).eq('banquero_id',bIdGD);toast('Eliminado');await loadGR();}
+// addGR / delGR eliminadas 2026-05-21 junto con el form "Agregar Comisión
+// Anterior" del recolector. Razon: anon INSERT a public.ganancias_recolector
+// quedaba bloqueado silencioso por RLS (auth.uid() = null), el usuario veia
+// toast "OK" pero nada se grababa. delGR nunca tuvo onclick que la invocara
+// (era dead code desde antes). Si se necesita agregar/borrar acumulado manual
+// hoy: SQL directo (mismo patron usado en MIGRACION_acumulados_legacy.sql).
 
 let ajusteSigno='+';
 function abrirAjuste(signo){ajusteSigno=signo;document.getElementById('FO-ajuste-panel').style.display='block';document.getElementById('FO-ajuste-titulo').textContent=signo==='+'?'Agregar al Fondo':'Restar del Fondo';document.getElementById('FO-btn-guardar-ajuste').style.background=signo==='+'?'linear-gradient(135deg,#1a5276,#2e86c1)':'var(--r)';document.getElementById('FO-monto-ajuste').value='';document.getElementById('FO-desc-ajuste').value='';document.getElementById('FO-monto-ajuste').focus();}
