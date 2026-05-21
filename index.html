@@ -1602,14 +1602,29 @@ async function doAC(inp){
   const q=inp.value.trim().toUpperCase(),l=document.getElementById('ACL');
   if(!q){l.classList.remove('on');return;}
   try{
-    const bIdCA=await getBID();
-    // '\_\_%' = guiones bajos LITERALES (en LIKE, '_' es comodín de 1 char;
-    // '__%' excluía a casi todos los clientes ⇒ autocompletado siempre vacío).
-    // En JS, '\\_\\_%' produce el patrón \_\_% que PostgreSQL interpreta literal.
-    const {data}=await sb.from('clientes').select('nombre').ilike('nombre',q+'%').not('nombre','like','\\_\\_%').eq('banquero_id',bIdCA).limit(6);
-    if(!data||!data.length){l.classList.remove('on');return;}
-    l.innerHTML=data.map(c=>{
-      const nombre=c.nombre;
+    let nombres=null;
+    // ETAPA 2 (recolector): va por RPC server-side (banca.recolector_clientes)
+    // para no depender de SELECT anon a public.clientes. Si la RPC falla por
+    // cualquier motivo (red, token, error inesperado), caemos al fallback de
+    // la query directa — la UX del autocomplete nunca se rompe durante la
+    // transicion. El admin (con JWT) sigue por el camino directo de siempre.
+    if(rol==='recolector'&&recToken){
+      try{
+        const {data,error}=await sb.schema('banca').rpc('recolector_clientes',{p_token:recToken,p_q:q,p_limit:6});
+        if(error){if(_tokenMurio(error)){l.classList.remove('on');return;}}
+        else nombres=(data||[]).map(r=>r.nombre);
+      }catch{/* cae al fallback */}
+    }
+    if(nombres===null){
+      const bIdCA=await getBID();
+      // '\_\_%' = guiones bajos LITERALES (en LIKE, '_' es comodín de 1 char;
+      // '__%' excluía a casi todos los clientes ⇒ autocompletado siempre vacío).
+      // En JS, '\\_\\_%' produce el patrón \_\_% que PostgreSQL interpreta literal.
+      const {data}=await sb.from('clientes').select('nombre').ilike('nombre',q+'%').not('nombre','like','\\_\\_%').eq('banquero_id',bIdCA).limit(6);
+      nombres=(data||[]).map(c=>c.nombre);
+    }
+    if(!nombres.length){l.classList.remove('on');return;}
+    l.innerHTML=nombres.map(nombre=>{
       const safe=esc(nombre);
       const re=new RegExp('^'+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i');
       const highlighted=safe.replace(re,'<strong>'+esc(nombre.substring(0,q.length))+'</strong>');
