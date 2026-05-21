@@ -141,11 +141,74 @@ Tras los 3 items principales, se ejecutaron 3 mejoras documentadas en `migration
 - **REVOKE ALL FROM anon en 4 tablas admin-only**: banquero_ajustes, fondo_movimientos, limites_numeros, comision_historial. Defensa en profundidad (antes solo RLS las cubría).
 - **REVOKE ALL FROM anon en ganancias_recolector** + eliminación del form "Agregar Comisión Anterior" del recolector que estaba silent-broken. Si se necesita agregar acumulado manual: SQL directo. Commit `e67518c`.
 
-### #4 — Hash bcrypt + sal en password recolector (DIFERIDO post-25-may)
-Refactor grande del flow de auth recolector. Para 5-20 banqueros de confianza el SHA-256 actual es aceptable; sería must si vas a 100+ usuarios públicos.
+### #4 — Hash bcrypt + sal en password recolector (DIFERIDO con criterio)
 
-### #5 — F3 escritura money 100% server-side (DIFERIDO post-25-may)
-8 RPCs nuevas para ajustes de fondo/borrados/etc. Cierre ya está server. Beneficio marginal vs esfuerzo en 4 días.
+**Estado hoy:** SHA-256 sin sal calculado client-side. Aceptable para 5-20 banqueros de confianza.
+
+**Cuándo SÍ aplicarlo (triggers concretos):**
+- Si la BD llega a **50+ recolectores totales** (sumando todas las bancas).
+- Si la BD llega a **20+ banqueros distintos** (aumenta superficie de ataque).
+- Si vas a hacer público el signup sin moderación (cualquiera puede crear cuenta).
+- Si tenés una sospecha o un evento real de password leak/intento de brute force.
+
+**Por qué importa con muchos usuarios:**
+- SHA-256 sin sal es vulnerable a **rainbow tables** (tablas pre-computadas de hashes comunes).
+- Si alguien logra leer la tabla `banca.recolectores` (por bug RLS, dump de Supabase, lo que sea), puede crackear claves débiles en segundos.
+- Con bcrypt + sal: cada hash es único aunque la clave sea la misma. Las rainbow tables se vuelven inútiles. El brute force pasa de "millones por segundo" a "decenas por segundo".
+
+**Esfuerzo real:** 1-2 días bien hechos.
+1. Habilitar `pgcrypto` en Supabase (si no está): `CREATE EXTENSION IF NOT EXISTS pgcrypto;`
+2. Agregar columna `password_hash_bcrypt` a `banca.recolectores` (mantener la vieja durante migración).
+3. Reescribir `banca.login_recolector` y `banca.cambiar_password_recolector` para usar `crypt(password, password_hash_bcrypt)` y verificar con `crypt(input, stored_hash) = stored_hash`.
+4. **Grace period**: en `login_recolector`, si NO hay bcrypt hash pero sí SHA-256, validar con SHA-256 y AL MISMO TIEMPO migrar a bcrypt (`UPDATE ... SET password_hash_bcrypt = crypt(password, gen_salt('bf'))`). Después de N días, drop columna vieja.
+5. Cliente: dejar de hashear con SHA-256, mandar el password en plain text (vía HTTPS, protegido por TLS) — bcrypt corre en BD.
+6. Validar que login + cambio de password funcionan post-migración.
+
+---
+
+### #5 — F3 escritura money 100% server-side (DIFERIDO con criterio)
+
+**Estado hoy:** cierre y cálculo de fondo son 100% server-side (Punto 4 F2 cerrado). Lo que aún parte del cliente:
+- Ajustes manuales del fondo (`fondo_movimientos.insert`).
+- Borrado de jugadas / días / meses (`delJ`, `delAll`, `eliminarDiaCompleto`, `borrarMes`).
+- Edición de `__FONDO_BASE__` / `__FONDO_ACUM__` (`saveFoBase`, `saveFoAcum`).
+- Reversión de cierres (`revertirCierre`).
+
+**Por qué hoy es aceptable:**
+- Esas escrituras requieren JWT admin (`auth.uid()`) — RLS las acota a la propia banca.
+- 26 queries auditadas con `banquero_id` explícito como defensa en profundidad (Etapa 4).
+- No hay vía para que un banquero modifique la banca de otro.
+
+**Cuándo SÍ aplicarlo (triggers concretos):**
+- Si surge un **bug real donde un cliente comprometido escribe valores incorrectos** (ej. XSS, extensión del browser, plugin malicioso).
+- Si necesitás **logs server-side inviolables** de cada modificación de fondo (auditoría avanzada).
+- Si planeás integraciones con sistemas externos donde el cliente no sea de confianza (API pública, white-label, etc.).
+- Si el equipo crece y querés que la lógica financiera viva en un solo lugar (server), no esparcida en JS cliente.
+
+**Por qué con muchos banqueros importa más:**
+- Con 200 banqueros, la probabilidad de uno con dispositivo comprometido aumenta.
+- Errores cliente afectan solo a su propia banca (RLS protege a otros), pero el banquero afectado puede perder mucho dinero.
+- Auditoría centralizada server-side es más fácil de mantener y revisar.
+
+**Esfuerzo real:** 2.5-4 hs si va perfecto, 6-8 hs si surgen edge cases.
+- 8 RPCs nuevas: `banca.guardar_fondo_base`, `banca.guardar_fondo_acum`, `banca.ajustar_fondo`, `banca.borrar_jugada`, `banca.borrar_jugadas_seleccionadas`, `banca.eliminar_dia`, `banca.borrar_mes`, `banca.revertir_cierre`.
+- Cada una valida `auth.uid()` y opera en transacción atómica con `recalcFondo` server-side.
+- Reescribir ~8 sitios cliente para usar las RPCs.
+- `REVOKE INSERT/UPDATE/DELETE FROM authenticated` en las tablas afectadas — solo via RPC.
+- Validar A/B (totales pre/post cambio idénticos).
+
+---
+
+## 🎯 Decisión estratégica recomendada según escala futura
+
+| Escala esperada | #4 bcrypt | #5 F3 money server | Otros |
+|---|---|---|---|
+| **5-10 banqueros conocidos** (caso actual) | ❌ No urgente | ❌ No urgente | App está OK |
+| **20-50 banqueros** | ⚠️ Recomendado | ❌ Diferir | Hacer bcrypt |
+| **50-100 banqueros** | ✅ **Obligatorio** | ⚠️ Recomendado | Hacer ambos |
+| **100+ banqueros públicos** | ✅ Obligatorio | ✅ Obligatorio | + Monitoring, rate limit, etc. |
+
+**Si llegás a 200 banqueros:** hacer #4 + #5 + considerar (a) rate limiting en login_recolector, (b) email/SMS 2FA para banqueros, (c) logging avanzado con alertas (Sentry/Datadog), (d) backups automáticos diarios de Supabase.
 
 ---
 
