@@ -3098,7 +3098,21 @@ async function loadResR(){
   // Sesión según RESULTADO del día aplicado, no por hora (espejo de loadGR)
   try{await detectarSesionActiva();}catch{}
   const sesionActualR=window._sesionActual||'dia';
-  const {data:res}=await sb.from('resultados').select('*').eq('fecha',hoy).eq('sesion',sesionActualR).eq('banquero_id',banqueroId||'').maybeSingle();
+  // ETAPA 2 (recolector): RPC con fallback al SELECT directo. Usamos flag
+  // rpcOK explicito para distinguir "RPC fallo y debe caer al fallback" de
+  // "RPC OK pero no encontro cierre todavia" (caso normal con res=null).
+  let res=null, rpcOK=false;
+  if(rol==='recolector'&&recToken){
+    try{
+      const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:[hoy],p_sesiones:[sesionActualR]});
+      if(error){if(_tokenMurio(error))return;}
+      else{res=(data&&data[0])||null;rpcOK=true;}
+    }catch{/* rpcOK queda false → fallback */}
+  }
+  if(!rpcOK){
+    const {data}=await sb.from('resultados').select('*').eq('fecha',hoy).eq('sesion',sesionActualR).eq('banquero_id',banqueroId||'').maybeSingle();
+    res=data;
+  }
   if(!res){
     const npd=document.getElementById('NPD');
     if(npd){
