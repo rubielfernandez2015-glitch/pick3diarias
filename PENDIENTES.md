@@ -92,14 +92,17 @@ Esto reactiva el fallback de los 7 sitios cliente y restaura el comportamiento p
 
 Orden de ataque acordado 2026-05-21. Trabajamos uno por uno, validando en localhost antes de prod.
 
-### #1 — Auditoría a prueba de manipulación (~2 hs, alta prioridad)
-**Por qué primero:** hoy `audit()` cliente inserta en `public.auditoria` como `anon`. Cualquiera con la publishable key puede inyectar entradas falsas en los logs de auditoría. Si surge disputa entre banqueros, los logs no son confiables.
+### #1 — Auditoría a prueba de manipulación — ✅ CERRADA 2026-05-21
 
-**Plan:**
-1. Crear RPC `public.audit_log(p_action text, p_data jsonb)` SECURITY DEFINER. Valida el banquero_id desde `auth.uid()` (admin) o token (recolector). Inserta con la identidad real.
-2. Reescribir todas las llamadas a `audit()` cliente para que usen la RPC.
-3. `REVOKE INSERT ON public.auditoria FROM anon` al final.
-4. Validar que las entradas nuevas en `auditoria` tienen banquero_id correcto y rol auténtico.
+Antes: `audit()` cliente insertaba como `anon` con `banquero_id` y `recolector_id` enviados por el cliente. Cualquiera con la publishable key podía inyectar entradas falsas vía POST anon.
+
+Ahora:
+- RPC `public.audit_log(p_accion, p_detalle, p_recolector_id, p_token)` SECURITY DEFINER. Si llega con `p_token` → valida via `banca._rec_por_token` y deriva `banquero_id` + `recolector_id` REALES desde BD. Si no → usa `auth.uid()` (admin). El cliente **no puede mentir** sobre quién hace la acción.
+- `audit()` cliente reescrito para llamar la RPC. Fallback al INSERT directo eliminado por REVOKE (innecesario).
+- `REVOKE INSERT ON public.auditoria FROM anon` ejecutado en producción.
+- Validado: post-REVOKE, login banquero y login recolector siguen registrando 204 OK con identidades server-derivadas correctas.
+
+Commit principal: `1ded592`. Bonus: durante el debug se descubrió un bug de timing en los 7 sitios de Etapa 2 (condición `rol==='recolector'&&recToken` fallaba durante restore post-F5). Fix uniformado a `if(recToken)` en los 7 sitios.
 
 ### #2 — Verificar / mejorar recuperación de password del recolector (~1-2 hs)
 **Por qué:** si un recolector olvida la clave, hoy no es obvio cómo recuperarla. ¿El banquero puede cambiársela desde Equipo? ¿Hay UI? Hay que verificar el flujo y si falta UI, agregar el botón "Cambiar contraseña" en Equipo del admin.
