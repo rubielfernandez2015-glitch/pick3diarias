@@ -104,8 +104,19 @@ Ahora:
 
 Commit principal: `1ded592`. Bonus: durante el debug se descubrió un bug de timing en los 7 sitios de Etapa 2 (condición `rol==='recolector'&&recToken` fallaba durante restore post-F5). Fix uniformado a `if(recToken)` en los 7 sitios.
 
-### #2 — Verificar / mejorar recuperación de password del recolector (~1-2 hs)
-**Por qué:** si un recolector olvida la clave, hoy no es obvio cómo recuperarla. ¿El banquero puede cambiársela desde Equipo? ¿Hay UI? Hay que verificar el flujo y si falta UI, agregar el botón "Cambiar contraseña" en Equipo del admin.
+### #2 — Recuperación de password del recolector — ✅ CERRADA 2026-05-21
+
+Estado descubierto al auditar:
+- **Recolector cambia su propia clave** (boton 🔑 header) → estaba ROTO silencioso: hacia UPDATE directo a `banca.recolectores` como anon, RLS bloqueaba pero Supabase no devolvia error → toast decia OK pero la clave no cambiaba → al loguear con la nueva no entraba. **Bug real en produccion**.
+- **Banquero resetea clave de recolector** (Equipo → 🔑 Pass) → funcionaba OK (admin tiene auth.uid()).
+- **Recolector olvidó su clave** (no logueado) → SIN UI, sin guia, quedaba bloqueado sin saber a quien pedir ayuda.
+
+Fixes:
+- RPC `banca.cambiar_password_recolector(p_token uuid, p_nueva_hash text)` SECURITY DEFINER. Valida el token via `_rec_por_token`, actualiza SOLO la fila del recolector autenticado. Commit `d75df66`.
+- Cliente `cambiarPass` reescrito para usar la RPC.
+- Mensaje informativo en login al seleccionar rol "Recolector": guia a contactar al banquero (Equipo → 🔑 Pass). Commit `40cb444`.
+
+Validado en localhost: cambio + logout + login con nueva clave = entra. Restauracion OK. Mensaje en login se muestra/oculta correctamente al alternar roles.
 
 ### #3 — Migraciones SQL versionadas en repo (~2 hs)
 **Por qué:** hoy todo el schema/RPCs/policies/publication vive solo en Supabase. Si la BD se corrompe o tenés que recrearla en otra cuenta, perdés todo. Crear `/migrations` con snapshot del estado actual + scripts numerados para los próximos cambios.
