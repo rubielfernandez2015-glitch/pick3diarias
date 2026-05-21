@@ -1608,7 +1608,7 @@ async function doAC(inp){
     // cualquier motivo (red, token, error inesperado), caemos al fallback de
     // la query directa — la UX del autocomplete nunca se rompe durante la
     // transicion. El admin (con JWT) sigue por el camino directo de siempre.
-    if(rol==='recolector'&&recToken){
+    if(recToken){
       try{
         const {data,error}=await sb.schema('banca').rpc('recolector_clientes',{p_token:recToken,p_q:q,p_limit:6});
         if(error){if(_tokenMurio(error)){l.classList.remove('on');return;}}
@@ -1670,7 +1670,7 @@ async function isSesionCerrada(sesion){
   // (se llama desde detectarSesionActiva muchas veces) — si la RPC falla
   // por cualquier motivo, caemos al SELECT directo. El admin no cambia.
   let cerrado=null;
-  if(rol==='recolector'&&recToken){
+  if(recToken){
     try{
       const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:[etHoy()],p_sesiones:[sesion]});
       if(error){if(_tokenMurio(error))return false;}
@@ -3102,7 +3102,7 @@ async function loadResR(){
   // rpcOK explicito para distinguir "RPC fallo y debe caer al fallback" de
   // "RPC OK pero no encontro cierre todavia" (caso normal con res=null).
   let res=null, rpcOK=false;
-  if(rol==='recolector'&&recToken){
+  if(recToken){
     try{
       const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:[hoy],p_sesiones:[sesionActualR]});
       if(error){if(_tokenMurio(error))return;}
@@ -3424,7 +3424,7 @@ async function loadGR(){
 
   // Resultado de la sesión actual. ETAPA 2 (recolector): RPC con fallback.
   let resH=null, rpcOKresH=false;
-  if(rol==='recolector'&&recToken){
+  if(recToken){
     try{
       const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:[hoy],p_sesiones:[sesionActual]});
       if(error){if(_tokenMurio(error))return;}
@@ -3474,7 +3474,7 @@ async function loadGR(){
       // ETAPA 2: RPC con fallback. Si la RPC falla, mantener chequeo de
       // bIdGR como anti-fuga.
       let sesGR=null, rpcOKsesGR=false;
-      if(rol==='recolector'&&recToken){
+      if(recToken){
         try{
           const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:fechasGR,p_sesiones:null});
           if(error){if(_tokenMurio(error))return;}
@@ -4220,14 +4220,35 @@ async function revertirCierre(fecha){
 // ── LOG DE AUDITORÍA ──
 async function audit(accion, detalle={}, recId=null){
   try{
-    const bId=banqueroId||await getBID();
-    if(!bId)return;
-    await sb.from('auditoria').insert({
-      banquero_id:bId,
-      recolector_id:recId||null,
-      accion,
-      detalle,
+    // ETAPA "Auditoria a prueba de manipulacion": usar RPC public.audit_log
+    // (SECURITY DEFINER) que valida el banquero_id desde auth.uid() o desde
+    // el token del recolector. El cliente ya NO puede mentir sobre quien
+    // hace la accion; el server determina la identidad real.
+    //
+    // Mantengo fallback al INSERT directo mientras anon todavia tenga grant
+    // de INSERT en public.auditoria (antes del REVOKE final). Si la RPC
+    // falla por red o token vencido, el fallback registra lo que pueda.
+    // Decision basada en recToken (no en rol): durante el LOGIN_RECOLECTOR
+    // recToken ya esta seteado pero `rol` aun no (sS('recolector') se llama
+    // despues). Tambien cubre logout zombi: si por algun bug queda recToken
+    // sin rol valido, la RPC server-side igual rechazara con TOKEN_INVALIDO.
+    const useToken = !!recToken;
+    const {error} = await sb.rpc('audit_log',{
+      p_accion: accion,
+      p_detalle: detalle,
+      p_recolector_id: recId,
+      p_token: useToken ? recToken : null
     });
+    if(error){
+      const bId=banqueroId||await getBID();
+      if(!bId)return;
+      await sb.from('auditoria').insert({
+        banquero_id:bId,
+        recolector_id:recId||null,
+        accion,
+        detalle,
+      });
+    }
   }catch(e){console.warn('Audit error:',e);}
 }
 
