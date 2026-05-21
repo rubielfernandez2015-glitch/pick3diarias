@@ -68,25 +68,23 @@ Cada sitio: si `rol==='recolector'&&recToken` → intenta RPC, si falla cae al S
 | 5 | `togHistRec` detalle día expandido | `0ef4f5d` |
 | 6+7 | `loadGR` (resH + sesGR) | `f23adf9` |
 
-### ⏸️ Fase H — `REVOKE SELECT FROM anon` (DIFERIDO POR SEGURIDAD)
+### ✅ Fase H — REVOKE ejecutado 2026-05-21
 
-**NO ejecutar hasta validar varios días (~5-7) de uso productivo real.** El REVOKE es prácticamente irreversible-en-frío: si en producción aparece un edge case que la RPC no cubre, el fallback ya no funcionará (anon dará 401) y se perdería UX hasta hacer el GRANT de nuevo.
-
-Cuando se decida ejecutar:
 ```sql
-REVOKE SELECT ON public.resultados FROM anon;
 REVOKE SELECT ON public.clientes   FROM anon;
+REVOKE SELECT ON public.resultados FROM anon;
 ```
 
-Después: re-probar todos los flujos del recolector (autocomplete, resultado, historial, ganancias, expandir días). Si algún sitio rompe, identificar y arreglar antes de cerrar la fuga definitivamente.
+Verificación: `anon` ya NO tiene `SELECT` en ninguna de las 2 tablas (solo INSERT/UPDATE/DELETE/etc., que igual quedan bloqueados por RLS sin `auth.uid()`). La única vía de lectura para el recolector es vía RPC `banca.recolector_resultados` y `banca.recolector_clientes` (token-aware, filtrado por banca server-side).
 
-**Rollback de emergencia** (si pasara algo y hay que revertir el REVOKE):
+**Rollback de emergencia** (si en los próximos días apareciera algo roto en uso real):
 ```sql
-GRANT SELECT ON public.resultados TO anon;
 GRANT SELECT ON public.clientes   TO anon;
+GRANT SELECT ON public.resultados TO anon;
 ```
+Esto reactiva el fallback de los 7 sitios cliente y restaura el comportamiento previo al REVOKE mientras se investiga.
 
-**Mitigación actual** (por qué se podía diferir): la `publishable key` no expone `service_role`; lo único leíble cross-banca son nombres de clientes y números/picks de otras bancas vía API si alguien conoce el endpoint exacto. **Sin riesgo financiero** (`jugadas` ya está aislada por banca).
+**Etapa 2 100% cerrada.** Última fuga de lectura cross-banca cubierta.
 
 ---
 
