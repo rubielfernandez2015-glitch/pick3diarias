@@ -1666,8 +1666,21 @@ async function isSesionCerrada(sesion){
   if(!navigator.onLine){
     try{return localStorage.getItem('sesion_cerrada_'+(banqueroId||'x')+'_'+etHoy()+'_'+sesion)==='1';}catch{return false;}
   }
-  const{data}=await sb.from('resultados').select('numero').eq('fecha',etHoy()).eq('sesion',sesion).eq('banquero_id',banqueroId||'').maybeSingle();
-  const cerrado=!!data;
+  // ETAPA 2 (recolector): RPC con fallback. Esta funcion es hot-path
+  // (se llama desde detectarSesionActiva muchas veces) — si la RPC falla
+  // por cualquier motivo, caemos al SELECT directo. El admin no cambia.
+  let cerrado=null;
+  if(rol==='recolector'&&recToken){
+    try{
+      const {data,error}=await sb.schema('banca').rpc('recolector_resultados',{p_token:recToken,p_fechas:[etHoy()],p_sesiones:[sesion]});
+      if(error){if(_tokenMurio(error))return false;}
+      else cerrado=!!(data&&data.length);
+    }catch{/* cae al fallback */}
+  }
+  if(cerrado===null){
+    const{data}=await sb.from('resultados').select('numero').eq('fecha',etHoy()).eq('sesion',sesion).eq('banquero_id',banqueroId||'').maybeSingle();
+    cerrado=!!data;
+  }
   try{
     const key='sesion_cerrada_'+(banqueroId||'x')+'_'+etHoy()+'_'+sesion;
     if(cerrado)localStorage.setItem(key,'1');
