@@ -28,21 +28,19 @@ Banca de prueba `BancaTest`/`55SMP` (uid `f3ffb478-...`) creada con `rubielferna
 
 ---
 
-### 4. Realtime subscription a `resultados` (notificaciones server → cliente sin polling)
-**Esfuerzo:** ~45 min. **Riesgo:** bajo (canal aditivo, no cambia lógica).
+### 4. Realtime subscription — ✅ VALIDADO 2026-05-21
 
-Reportado 2026-05-21: al revertir un cierre desde la web, la PWA en background tarda en reflejarlo hasta que vuelve al foco (sin `visibilitychange` no hay disparo). Workaround actual: actualizar manualmente la PWA.
+Diagnóstico: la suscripción cliente (`startRT` línea 2589) YA existía y estaba bien armada para `jugadas` y `resultados`. El problema era **server-side**: la `publication supabase_realtime` estaba vacía → ningún cambio se propagaba.
 
-**Solución:** suscribirse a cambios de `public.resultados` filtrados por `banquero_id` via Supabase Realtime. Cualquier INSERT/UPDATE/DELETE → `resyncEstado()` automático sin necesidad de foco/polling. La app ya tiene una variable `rts` declarada (ver `logout` que la limpia); falta cablear la suscripción en `login` y en el handler.
-
-```js
-rts = sb.channel('resultados-'+banqueroId)
-  .on('postgres_changes', {event:'*', schema:'public', table:'resultados',
-       filter:'banquero_id=eq.'+banqueroId}, () => resyncEstado())
-  .subscribe();
+Fix en Supabase (3 SQLs):
+```sql
+ALTER PUBLICATION supabase_realtime ADD TABLE public.jugadas;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.resultados;
+ALTER TABLE public.jugadas    REPLICA IDENTITY FULL;
+ALTER TABLE public.resultados REPLICA IDENTITY FULL;
 ```
 
-Beneficio extra: también se reflejaría en tiempo real cualquier cambio hecho desde otra pestaña/dispositivo sin esperar al `visibilitychange`.
+Validado en vivo: cierre/revertir en pestaña A → pestaña B y PWA en otro dispositivo reflejan el cambio en 1-2s sin foco/F5. Cero código cambiado en `index.html`.
 
 ---
 
