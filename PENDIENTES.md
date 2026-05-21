@@ -88,14 +88,30 @@ Esto reactiva el fallback de los 7 sitios cliente y restaura el comportamiento p
 
 ---
 
-## 🔴 v1.1+ / v2 — más adelante
+## 🎯 Roadmap priorizado hasta 2026-05-25 (deadline duro)
 
-| # | Item | Por qué se difiere |
-|---|---|---|
-| 4 | F3 escritura money 100% server-side (≈8 RPCs) | Cierre ya está en servidor (Punto 4 F2); beneficio marginal vs esfuerzo |
-| 5 | Hash bcrypt + sal en contraseña recolector | Hoy SHA-256 client-side; requiere refactor Auth completo (v2) |
-| 6 | Auditoría a prueba de manipulación | Hoy `audit()` inserta como anon; mover a RPC SECURITY DEFINER |
-| 7 | Migraciones SQL versionadas en repo | Hoy schema/RPCs/policies viven solo en Supabase; sin versionado |
+Orden de ataque acordado 2026-05-21. Trabajamos uno por uno, validando en localhost antes de prod.
+
+### #1 — Auditoría a prueba de manipulación (~2 hs, alta prioridad)
+**Por qué primero:** hoy `audit()` cliente inserta en `public.auditoria` como `anon`. Cualquiera con la publishable key puede inyectar entradas falsas en los logs de auditoría. Si surge disputa entre banqueros, los logs no son confiables.
+
+**Plan:**
+1. Crear RPC `public.audit_log(p_action text, p_data jsonb)` SECURITY DEFINER. Valida el banquero_id desde `auth.uid()` (admin) o token (recolector). Inserta con la identidad real.
+2. Reescribir todas las llamadas a `audit()` cliente para que usen la RPC.
+3. `REVOKE INSERT ON public.auditoria FROM anon` al final.
+4. Validar que las entradas nuevas en `auditoria` tienen banquero_id correcto y rol auténtico.
+
+### #2 — Verificar / mejorar recuperación de password del recolector (~1-2 hs)
+**Por qué:** si un recolector olvida la clave, hoy no es obvio cómo recuperarla. ¿El banquero puede cambiársela desde Equipo? ¿Hay UI? Hay que verificar el flujo y si falta UI, agregar el botón "Cambiar contraseña" en Equipo del admin.
+
+### #3 — Migraciones SQL versionadas en repo (~2 hs)
+**Por qué:** hoy todo el schema/RPCs/policies/publication vive solo en Supabase. Si la BD se corrompe o tenés que recrearla en otra cuenta, perdés todo. Crear `/migrations` con snapshot del estado actual + scripts numerados para los próximos cambios.
+
+### #4 — Hash bcrypt + sal en password recolector (DIFERIDO post-25-may)
+Refactor grande del flow de auth recolector. Para 5-20 banqueros de confianza el SHA-256 actual es aceptable; sería must si vas a 100+ usuarios públicos.
+
+### #5 — F3 escritura money 100% server-side (DIFERIDO post-25-may)
+8 RPCs nuevas para ajustes de fondo/borrados/etc. Cierre ya está server. Beneficio marginal vs esfuerzo en 4 días.
 
 ---
 
