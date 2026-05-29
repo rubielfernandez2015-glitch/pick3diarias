@@ -1832,7 +1832,13 @@ async function obtenerCola(){
   return new Promise((res,rej)=>{
     const tx=db.transaction(ODB_STORE,'readonly');
     const req=tx.objectStore(ODB_STORE).index('sync').getAll(0);
-    req.onsuccess=()=>res(req.result||[]);
+    req.onsuccess=()=>{
+      const todos=req.result||[];
+      // Scope por banca: la cola IndexedDB es global del navegador. Sin filtrar, un
+      // borrador hecho en otra banca (mismo dispositivo) se mostraría y se sincronizaría
+      // con el dueño equivocado. Solo devolvemos los ítems de la banca activa.
+      res(banqueroId?todos.filter(j=>String(j.banquero_id||'')===String(banqueroId)):todos);
+    };
     req.onerror=()=>rej(req.error);
   });
 }
@@ -2060,7 +2066,7 @@ async function insertarTexto(cerrado){
   }
   if(errores.length)return toast('⚠️ '+errores[0],true);
   if(!jugadas.length)return toast('No hay jugadas válidas',true);
-  await insertarJugadas(cli,jugadas,cerrado);
+  try{await insertarJugadas(cli,jugadas,cerrado);}catch(e){return toast('Error: '+e.message,true);}
   limpiarModo('texto');
   document.getElementById('IC').value='';
   document.getElementById('ACL').classList.remove('on');
@@ -2136,7 +2142,10 @@ async function insertarJugadas(cli,jugadas,cerrado){
   try{await detectarSesionActiva();}catch{}
   const sesionActual=window._sesionActual||'dia';
   if(!await hayInternet()){
-    const rows=jugadas.map(j=>({fecha:fechaJ,cliente:cli,decena:j.dec,pick:j.pick,centena:'0',numero:j.dec+j.pick,monto:j.monto,hora,dia_cierre:null,sesion:sesionActual,recolector_id:getRecIdParaInsertar(),banquero_id:banqueroId||null}));
+    // Nunca encolar sin banca: una jugada con banquero_id null queda huérfana (no la lee
+    // nadie) y, al sincronizar en otra sesión, se escribiría con dueño equivocado.
+    if(!banqueroId)throw new Error('Sesión sin banca asignada — vuelve a entrar');
+    const rows=jugadas.map(j=>({fecha:fechaJ,cliente:cli,decena:j.dec,pick:j.pick,centena:'0',numero:j.dec+j.pick,monto:j.monto,hora,dia_cierre:null,sesion:sesionActual,recolector_id:getRecIdParaInsertar(),banquero_id:banqueroId}));
     await guardarEnCola(rows);
     return;
   }
@@ -2149,14 +2158,14 @@ async function insertarJugadas(cli,jugadas,cerrado){
     });
     if(error){if(_tokenMurio(error))return;throw error;}
   }else{
-    const rows=jugadas.map(j=>({fecha:fechaJ,cliente:cli,decena:j.dec,pick:j.pick,centena:'0',numero:j.dec+j.pick,monto:j.monto,hora,dia_cierre:null,sesion:sesionActual,recolector_id:getRecIdParaInsertar(),banquero_id:banqueroId||null}));
+    // Admin online: nunca insertar sin banca (jugada huérfana + cliente duplicado null).
+    if(!banqueroId)throw new Error('Sesión sin banca asignada — vuelve a entrar');
+    const rows=jugadas.map(j=>({fecha:fechaJ,cliente:cli,decena:j.dec,pick:j.pick,centena:'0',numero:j.dec+j.pick,monto:j.monto,hora,dia_cierre:null,sesion:sesionActual,recolector_id:getRecIdParaInsertar(),banquero_id:banqueroId}));
     const {error}=await sb.from('jugadas').insert(rows);
     if(error)throw error;
-    // upsert del cliente DEBE incluir banquero_id + onConflict por (nombre,banquero_id),
-    // si no, dos bancas con cliente del mismo nombre pisan la fila la una de la otra.
-    if(banqueroId){
-      await sb.from('clientes').upsert({nombre:cli,ultimo:etHoy(),banquero_id:banqueroId},{onConflict:'nombre,banquero_id'});
-    }
+    // upsert del cliente DEBE incluir banquero_id + onConflict por (nombre,banquero_id):
+    // con banquero_id null el onConflict no deduplica (NULL≠NULL en SQL) y crea filas nuevas.
+    await sb.from('clientes').upsert({nombre:cli,ultimo:etHoy(),banquero_id:banqueroId},{onConflict:'nombre,banquero_id'});
   }
   // Pequeña espera para que Supabase confirme antes de loadJ
   await new Promise(r=>setTimeout(r,600));
