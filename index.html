@@ -535,12 +535,14 @@ textarea{resize:vertical;min-height:50px;}
         </div>
         <input type="file" id="ITX-foto-cam" accept="image/*" capture="environment" style="display:none;" onchange="procesarFotoJugada(event)">
         <input type="file" id="ITX-foto-gal" accept="image/*" style="display:none;" onchange="procesarFotoJugada(event)">
+        <div id="ITX-foto-controls" style="display:none;">
         <div style="display:flex;gap:8px;margin-bottom:8px;">
           <button type="button" onclick="const i=document.getElementById('ITX-foto-cam');i.value='';i.click();" style="flex:1;background:linear-gradient(135deg,#2a5a8a,#3a7ab0);color:#fff;border:none;border-radius:8px;padding:11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">📷 Tomar foto</button>
           <button type="button" onclick="const i=document.getElementById('ITX-foto-gal');i.value='';i.click();" style="flex:1;background:var(--b3);border:1px solid var(--br);color:var(--tx);border-radius:8px;padding:11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">🖼️ Subir foto</button>
         </div>
         <div style="font-size:10px;color:var(--t3);margin-bottom:8px;line-height:1.5;">📸 Para que lea bien: buena luz, boleta plana y enfocada, que llene la pantalla. Si sale algo mal, repite la foto o corrige el texto antes de Aceptar.</div>
         <div id="ITX-foto-stat" style="display:none;font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.5;"></div>
+        </div>
         <textarea id="ITX-texto" placeholder="25-10&#10;37 de 5.5&#10;98_10,5&#10;14 con 15" style="min-height:150px;font-family:monospace;font-size:13px;" oninput="parsearTexto()"></textarea>
         <div id="ITX-preview" style="display:none;margin-top:8px;background:rgba(96,214,255,.06);border:1px solid rgba(96,214,255,.3);border-radius:8px;padding:10px 13px;">
           <div style="font-size:10px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Vista previa — listo para registrar</div>
@@ -1730,6 +1732,7 @@ function setModo(modo,btn){
   limpiarModo(modoActual);modoActual=modo;
   document.querySelectorAll('[onclick^="setModo"],[onclick^="modoFoto"]').forEach(b=>{b.classList.toggle('on',b.getAttribute('onclick')===`setModo('${modo}',this)`);});
   TODOS_MODOS.forEach(m=>{const el=document.getElementById('modo-'+m);if(el)el.style.display=m===modo?'block':'none';});
+  const fc=document.getElementById('ITX-foto-controls');if(fc)fc.style.display='none';
   const rp=document.getElementById('resumen-previo');if(rp)rp.style.display='none';
 }
 
@@ -2094,6 +2097,7 @@ function modoFoto(btn){
   setModo('texto');
   document.querySelectorAll('[onclick^="setModo"],[onclick^="modoFoto"]').forEach(b=>b.classList.remove('on'));
   if(btn)btn.classList.add('on');
+  const fc=document.getElementById('ITX-foto-controls');if(fc)fc.style.display='block';
 }
 
 // Vacía el formulario de registro a mano (cliente + jugadas del modo actual).
