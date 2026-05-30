@@ -533,7 +533,12 @@ textarea{resize:vertical;min-height:50px;}
           <span style="color:var(--dc);font-family:'Bebas Neue';letter-spacing:1px;font-size:13px;">pick-monto</span><br>
           <span style="color:var(--t3);">Separadores válidos: <strong style="color:var(--t2);">-</strong> guión · <strong style="color:var(--t2);">_</strong> guión bajo · <strong style="color:var(--t2);">espacio</strong> · <strong style="color:var(--t2);">de</strong> · <strong style="color:var(--t2);">con</strong><br>Monto acepta punto o coma: 5.5 ó 5,5</span>
         </div>
-        <input type="file" id="ITX-foto-input" accept="image/*" style="display:none;" onchange="procesarFotoJugada(event)">
+        <input type="file" id="ITX-foto-cam" accept="image/*" capture="environment" style="display:none;" onchange="procesarFotoJugada(event)">
+        <input type="file" id="ITX-foto-gal" accept="image/*" style="display:none;" onchange="procesarFotoJugada(event)">
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <button type="button" onclick="const i=document.getElementById('ITX-foto-cam');i.value='';i.click();" style="flex:1;background:linear-gradient(135deg,#2a5a8a,#3a7ab0);color:#fff;border:none;border-radius:8px;padding:11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">📷 Tomar foto</button>
+          <button type="button" onclick="const i=document.getElementById('ITX-foto-gal');i.value='';i.click();" style="flex:1;background:var(--b3);border:1px solid var(--br);color:var(--tx);border-radius:8px;padding:11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">🖼️ Subir foto</button>
+        </div>
         <div id="ITX-foto-stat" style="display:none;font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.5;"></div>
         <textarea id="ITX-texto" placeholder="25-10&#10;37 de 5.5&#10;98_10,5&#10;14 con 15" style="min-height:150px;font-family:monospace;font-size:13px;" oninput="parsearTexto()"></textarea>
         <div id="ITX-preview" style="display:none;margin-top:8px;background:rgba(96,214,255,.06);border:1px solid rgba(96,214,255,.3);border-radius:8px;padding:10px 13px;">
@@ -2082,18 +2087,12 @@ async function insertarTexto(cerrado){
 }
 
 // ── 📷 LEER FOTO DE JUGADA (OCR via Edge Function recognize-jugada) ──
-// Modo "Foto" visible: usa el panel de Texto por debajo (para la revisión)
-// y abre directamente la cámara/galería.
+// Modo "Foto" visible: muestra el panel de Texto con dos opciones
+// (📷 Tomar foto / 🖼️ Subir foto) y la vista previa para revisar.
 function modoFoto(btn){
   setModo('texto');
   document.querySelectorAll('[onclick^="setModo"],[onclick^="modoFoto"]').forEach(b=>b.classList.remove('on'));
   if(btn)btn.classList.add('on');
-  abrirFotoJugada();
-}
-
-function abrirFotoJugada(){
-  const inp=document.getElementById('ITX-foto-input');
-  if(inp){inp.value='';inp.click();}
 }
 
 // Vacía el formulario de registro a mano (cliente + jugadas del modo actual).
