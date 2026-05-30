@@ -463,6 +463,7 @@ textarea{resize:vertical;min-height:50px;}
         <button class="modo-btn" onclick="setModo('parejas',this)">Parejas</button>
         <button class="modo-btn" onclick="setModo('texto',this)">Texto</button>
       </div>
+      <button class="modo-btn" onclick="modoFoto(this)" style="width:100%;background:linear-gradient(135deg,#2a5a8a,#3a7ab0);color:#fff;margin-bottom:4px;">📷 Registrar por foto</button>
       <div id="modo-individual">
         <label>Número jugado</label>
         <div class="P2">
@@ -530,8 +531,10 @@ textarea{resize:vertical;min-height:50px;}
         <div style="font-size:11px;color:var(--t3);margin-bottom:8px;margin-top:4px;line-height:1.7;">
           Un número por línea en el formato:<br>
           <span style="color:var(--dc);font-family:'Bebas Neue';letter-spacing:1px;font-size:13px;">pick-monto</span><br>
-          <span style="color:var(--t3);">Separadores válidos: <strong style="color:var(--t2);">-</strong> guión · <strong style="color:var(--t2);">_</strong> guión bajo · <strong style="color:var(--t2);">de</strong> · <strong style="color:var(--t2);">con</strong><br>Monto acepta punto o coma: 5.5 ó 5,5</span>
+          <span style="color:var(--t3);">Separadores válidos: <strong style="color:var(--t2);">-</strong> guión · <strong style="color:var(--t2);">_</strong> guión bajo · <strong style="color:var(--t2);">espacio</strong> · <strong style="color:var(--t2);">de</strong> · <strong style="color:var(--t2);">con</strong><br>Monto acepta punto o coma: 5.5 ó 5,5</span>
         </div>
+        <input type="file" id="ITX-foto-input" accept="image/*" style="display:none;" onchange="procesarFotoJugada(event)">
+        <div id="ITX-foto-stat" style="display:none;font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.5;"></div>
         <textarea id="ITX-texto" placeholder="25-10&#10;37 de 5.5&#10;98_10,5&#10;14 con 15" style="min-height:150px;font-family:monospace;font-size:13px;" oninput="parsearTexto()"></textarea>
         <div id="ITX-preview" style="display:none;margin-top:8px;background:rgba(96,214,255,.06);border:1px solid rgba(96,214,255,.3);border-radius:8px;padding:10px 13px;">
           <div style="font-size:10px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Vista previa — listo para registrar</div>
@@ -564,7 +567,10 @@ textarea{resize:vertical;min-height:50px;}
           <div><span style="font-family:'Bebas Neue';font-size:20px;color:var(--dc);" id="res-premio">0</span><div style="font-size:9px;color:var(--t3);text-transform:uppercase;">Premio máx.</div></div>
         </div>
       </div>
-      <button class="BTN BP" id="BTN-REGJ" onclick="regJ()">+ Registrar Jugada</button>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="BTN BP" id="BTN-REGJ" onclick="regJ()" style="flex:1;">+ Registrar Jugada</button>
+        <button type="button" onclick="limpiarFormulario()" title="Limpiar formulario" style="background:var(--b3);border:1px solid var(--br);color:var(--t3);border-radius:8px;padding:7px 10px;cursor:pointer;font-family:inherit;font-size:11px;white-space:nowrap;">🗑️ Limpiar</button>
+      </div>
     </div>
     <div class="S2">
       <div class="SB"><div class="SN" id="SJN">0</div><div class="SL">Jugadas Pendientes</div></div>
@@ -1716,7 +1722,7 @@ function limpiarModo(modo){
 
 function setModo(modo,btn){
   limpiarModo(modoActual);modoActual=modo;
-  document.querySelectorAll('[onclick^="setModo"]').forEach(b=>{b.classList.toggle('on',b.getAttribute('onclick')===`setModo('${modo}',this)`);});
+  document.querySelectorAll('[onclick^="setModo"],[onclick^="modoFoto"]').forEach(b=>{b.classList.toggle('on',b.getAttribute('onclick')===`setModo('${modo}',this)`);});
   TODOS_MODOS.forEach(m=>{const el=document.getElementById('modo-'+m);if(el)el.style.display=m===modo?'block':'none';});
   const rp=document.getElementById('resumen-previo');if(rp)rp.style.display='none';
 }
@@ -1968,7 +1974,8 @@ function separarLineaJugada(l){
     .replace(/\s+de\s+/i,'-')
     .replace(/\s+con\s+/i,'-')
     .replace(/_/g,'-')
-    .replace(/\s*-\s*/g,'-');
+    .replace(/\s*-\s*/g,'-')
+    .replace(/^(\d{1,2})\s+(\d)/,'$1-$2');  // espacio como separador: "25 10" -> "25-10"
   const idx=norm.indexOf('-');
   if(idx<0)return null;
   const pickStr=norm.substring(0,idx).trim();
@@ -1986,7 +1993,8 @@ function esLineaJugada(l){
     .replace(/\s+de\s+/i,'-')
     .replace(/\s+con\s+/i,'-')
     .replace(/_/g,'-')
-    .replace(/\s*-\s*/g,'-');
+    .replace(/\s*-\s*/g,'-')
+    .replace(/^(\d{1,2})\s+(\d)/,'$1-$2');  // espacio como separador
   return /^\d{1,2}-\d/.test(norm);
 }
 
@@ -2071,6 +2079,93 @@ async function insertarTexto(cerrado){
   document.getElementById('IC').value='';
   document.getElementById('ACL').classList.remove('on');
   toast('✓ '+cli+' · '+jugadas.length+' jugadas registradas');
+}
+
+// ── 📷 LEER FOTO DE JUGADA (OCR via Edge Function recognize-jugada) ──
+// Modo "Foto" visible: usa el panel de Texto por debajo (para la revisión)
+// y abre directamente la cámara/galería.
+function modoFoto(btn){
+  setModo('texto');
+  document.querySelectorAll('[onclick^="setModo"],[onclick^="modoFoto"]').forEach(b=>b.classList.remove('on'));
+  if(btn)btn.classList.add('on');
+  abrirFotoJugada();
+}
+
+function abrirFotoJugada(){
+  const inp=document.getElementById('ITX-foto-input');
+  if(inp){inp.value='';inp.click();}
+}
+
+// Vacía el formulario de registro a mano (cliente + jugadas del modo actual).
+function limpiarFormulario(){
+  limpiarModo(modoActual);
+  const ic=document.getElementById('IC');if(ic)ic.value='';
+  const acl=document.getElementById('ACL');if(acl)acl.classList.remove('on');
+  const stat=document.getElementById('ITX-foto-stat');if(stat){stat.style.display='none';stat.textContent='';}
+  toast('Formulario limpio');
+}
+
+// Comprime a máx `max`px lado mayor y JPEG calidad `q` (menos datos = más rápido/barato).
+// Usa createImageBitmap con imageOrientation:'from-image' para RESPETAR la rotación
+// EXIF de las fotos de celular (si no, podrían mandarse de lado y la IA las lee mal).
+async function comprimirImagen(file,max,q){
+  let src, w, h;
+  try{
+    src=await createImageBitmap(file,{imageOrientation:'from-image'});
+    w=src.width;h=src.height;
+  }catch{
+    src=await new Promise((res,rej)=>{const im=new Image();im.onload=()=>res(im);im.onerror=()=>rej(new Error('imagen inválida'));im.src=URL.createObjectURL(file);});
+    w=src.width;h=src.height;
+  }
+  if(Math.max(w,h)>max){const s=max/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s);}
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  c.getContext('2d').drawImage(src,0,0,w,h);
+  if(src.close)src.close();
+  const url=c.toDataURL('image/jpeg',q);
+  return {data:url.split(',')[1],mime:'image/jpeg'};
+}
+
+async function procesarFotoJugada(e){
+  const f=e.target.files&&e.target.files[0];
+  if(!f)return;
+  const btn=document.getElementById('ITX-foto-btn');
+  const stat=document.getElementById('ITX-foto-stat');
+  if(!navigator.onLine){toast('Necesitas internet para leer la foto',true);return;}
+  let img;
+  try{img=await comprimirImagen(f,1280,0.75);}
+  catch{toast('No se pudo leer la imagen',true);return;}
+  if(btn){btn.disabled=true;btn.style.opacity='0.6';}
+  if(stat){stat.style.display='block';stat.textContent='⏳ Leyendo la foto…';}
+  try{
+    const {data,error}=await sb.functions.invoke('recognize-jugada',{
+      body:{image_b64:img.data,mime:img.mime,token:recToken||null}
+    });
+    if(error){
+      let detalle=error.message||'falló la función';
+      // La función devuelve {error:"..."} con el motivo real; intentar leerlo.
+      try{if(error.context&&error.context.json){const j=await error.context.json();if(j&&j.error)detalle=j.error;}}catch{}
+      // Mensaje amable para el límite de Gemini (free tier).
+      if(/quota|exceeded|RESOURCE_EXHAUSTED|rate.?limit|\b429\b/i.test(detalle)){
+        detalle='Demasiadas fotos en poco tiempo. Espera ~1 minuto y vuelve a intentar.';
+      }
+      throw new Error(detalle);
+    }
+    if(data&&data.error)throw new Error(data.error);
+    const txt=((data&&data.text)||'').trim();
+    if(!txt||/sin jugadas/i.test(txt)){
+      if(stat)stat.textContent='⚠️ No se detectaron jugadas. Prueba con mejor luz, enfoque y la boleta plana.';
+      return;
+    }
+    const ta=document.getElementById('ITX-texto');
+    ta.value=ta.value.trim()?(ta.value.trim()+'\n'+txt):txt;
+    parsearTexto();
+    if(stat)stat.textContent='✓ Foto leída. REVISA la vista previa de abajo y corrige si algo salió mal antes de Aceptar.';
+  }catch(err){
+    if(stat){stat.style.display='none';stat.textContent='';}
+    toast('Error al leer la foto: '+(err.message||err),true);
+  }finally{
+    if(btn){btn.disabled=false;btn.style.opacity='1';}
+  }
 }
 
 // ── FECHA DE REGISTRO OPCIONAL ──

@@ -304,6 +304,17 @@ AS $function$
     v_bid := auth.uid();
     IF v_bid IS NULL THEN RAISE EXCEPTION 'No autenticado'; END IF;
 
+    -- GUARDA ANTI RE-CIERRE (ver migrations/01_anti_postresultado.sql):
+    -- no permitir cerrar una sesion que ya tiene resultado. Para cambiar el
+    -- numero hay que Revertir (que borra el resultado) y volver a cerrar.
+    IF EXISTS (
+      SELECT 1 FROM public.resultados r
+       WHERE r.banquero_id = v_bid AND r.fecha::text = p_fecha AND r.sesion = p_sesion
+    ) THEN
+      RAISE EXCEPTION 'SESION_YA_CERRADA: ya existe resultado para % %. Reverti el cierre antes de re-cerrar.', p_fecha, p_sesion
+        USING ERRCODE = 'unique_violation';
+    END IF;
+
     v_num  := lpad((NULLIF(regexp_replace(p_numero,'[^0-9]','','g'),''))::int::text, 3, '0');
     v_pick := substr(v_num, 2, 2);
 
@@ -607,6 +618,73 @@ BEGIN
   GROUP BY j.dia_cierre, r.pick, r.numero
   ORDER BY j.dia_cierre DESC;
 END;
+$function$;
+
+-- =============================================================================
+-- AUDITORIA POR TRIGGERS (ver migrations/02_auditoria_triggers.sql)
+-- =============================================================================
+-- Registra en public.auditoria, de forma automatica e inmanipulable, los
+-- cambios en tablas sensibles (clientes/fondo_movimientos/jugadas DELETE/
+-- resultados DELETE/banca.recolectores). Recrear triggers: ver 02_*.sql.
+CREATE OR REPLACE FUNCTION public.audit_row_change()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'banca'
+AS $function$
+  DECLARE v_banq uuid; v_row jsonb; v_old jsonb;
+  BEGIN
+    IF TG_OP = 'DELETE' THEN v_row := to_jsonb(OLD); ELSE v_row := to_jsonb(NEW); END IF;
+    v_row := v_row - 'password_hash';
+    IF TG_OP = 'UPDATE' THEN v_old := to_jsonb(OLD) - 'password_hash'; END IF;
+    v_banq := COALESCE(auth.uid(), NULLIF(v_row->>'banquero_id','')::uuid);
+    INSERT INTO public.auditoria(banquero_id, recolector_id, accion, detalle)
+    VALUES (v_banq, NULLIF(v_row->>'recolector_id','')::uuid,
+      'db:'||TG_TABLE_NAME||':'||lower(TG_OP),
+      jsonb_strip_nulls(jsonb_build_object('op',TG_OP,'tabla',TG_TABLE_NAME,
+        'fila',v_row,'anterior',v_old,'actor_uid',auth.uid(),'ts',now())));
+    RETURN NULL;
+  END
+$function$;
+
+-- =============================================================================
+-- TRIGGER ANTI PAST-POSTING (ver migrations/01_anti_postresultado.sql)
+-- =============================================================================
+-- Cuando la sesion ya tiene resultado: rechaza la jugada si es GANADORA
+-- (past-posting) y permite+loguea la perdedora tardia. SECURITY DEFINER porque
+-- anon no puede SELECT resultados. Recrear el trigger con:
+--   DROP TRIGGER IF EXISTS trg_jugadas_post_resultado ON public.jugadas;
+--   CREATE TRIGGER trg_jugadas_post_resultado BEFORE INSERT ON public.jugadas
+--     FOR EACH ROW EXECUTE FUNCTION public.jugadas_bloquea_post_resultado();
+CREATE OR REPLACE FUNCTION public.jugadas_bloquea_post_resultado()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'banca'
+AS $function$
+  DECLARE v_pick text; v_found boolean;
+  BEGIN
+    IF NEW.dia_cierre IS NULL AND NEW.sesion IS NOT NULL THEN
+      SELECT r.pick INTO v_pick FROM public.resultados r
+       WHERE r.banquero_id = NEW.banquero_id
+         AND r.fecha::text = NEW.fecha::text AND r.sesion = NEW.sesion LIMIT 1;
+      v_found := FOUND;
+      IF v_found THEN
+        IF NEW.pick = v_pick THEN
+          RAISE EXCEPTION
+            'SESION_CERRADA_GANADORA: la sesion % del % ya tiene resultado (pick %); no se acepta una jugada ganadora despues del cierre (anti past-posting).',
+            NEW.sesion, NEW.fecha, v_pick USING ERRCODE = 'check_violation';
+        ELSE
+          INSERT INTO public.auditoria(banquero_id, recolector_id, accion, detalle)
+          VALUES (NEW.banquero_id, NEW.recolector_id, 'db:jugadas:tardia',
+            jsonb_build_object('fecha',NEW.fecha,'sesion',NEW.sesion,'pick',NEW.pick,
+              'monto',NEW.monto,'cliente',NEW.cliente,'hora',NEW.hora,
+              'pick_ganador',v_pick,'actor_uid',auth.uid(),'ts',now()));
+        END IF;
+      END IF;
+    END IF;
+    RETURN NEW;
+  END
 $function$;
 
 -- =============================================================================

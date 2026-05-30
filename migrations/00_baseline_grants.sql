@@ -30,6 +30,12 @@ REVOKE SELECT ON public.clientes   FROM anon;
 -- valida banquero_id desde auth.uid() o token recolector).
 REVOKE INSERT ON public.auditoria FROM anon;
 
+-- Auditoria SOLO-INSERT (2026-05-30, ver migrations/02_auditoria_triggers.sql):
+-- nadie (ni el banquero) puede borrar/editar el rastro. El INSERT legitimo
+-- entra por SECURITY DEFINER (triggers public.audit_row_change + audit_log).
+REVOKE UPDATE, DELETE ON public.auditoria FROM anon;
+REVOKE UPDATE, DELETE ON public.auditoria FROM authenticated;
+
 
 -- =============================================================================
 -- ESTADO ACTUAL CONFIRMADO (al snapshot)

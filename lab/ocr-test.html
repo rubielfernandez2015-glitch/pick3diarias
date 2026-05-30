@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LAB · OCR jugadas (prueba local)</title>
+<style>
+  :root{--bg:#0f1419;--b2:#1a2129;--b3:#222c36;--br:#33404d;--tx:#e6edf3;--t2:#9fb0c0;--t3:#6b7c8c;--v:#1a7a4a;--vc:#25a060;--rc:#e05555;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx);padding:16px;max-width:760px;margin:0 auto;}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--t3);font-size:12px;margin-bottom:16px}
+  label{display:block;font-size:12px;color:var(--t2);margin:12px 0 4px}
+  input,textarea,select,button{width:100%;background:var(--b3);border:1px solid var(--br);border-radius:8px;padding:10px 12px;color:var(--tx);font-size:14px;font-family:inherit;}
+  textarea{resize:vertical;min-height:70px;font-family:ui-monospace,monospace;font-size:13px;}
+  button{background:linear-gradient(135deg,var(--v),var(--vc));border:none;font-weight:700;cursor:pointer;margin-top:12px;}
+  button:disabled{opacity:.5;cursor:default}
+  .row{display:flex;gap:10px}.row>*{flex:1}
+  .card{background:var(--b2);border:1px solid var(--br);border-radius:12px;padding:14px;margin-top:14px}
+  img#preview{max-width:100%;border-radius:10px;margin-top:10px;display:none}
+  pre{white-space:pre-wrap;word-break:break-word;background:var(--b3);border:1px solid var(--br);border-radius:8px;padding:10px;font-size:13px;margin:0}
+  .ok{color:var(--vc)}.bad{color:var(--rc)}
+  .pill{display:inline-block;background:var(--b3);border:1px solid var(--br);border-radius:6px;padding:2px 8px;font-size:11px;color:var(--t2);margin:2px 4px 2px 0}
+  .note{font-size:11px;color:var(--t3);margin-top:6px;line-height:1.5}
+</style>
+</head>
+<body>
+  <h1>🧪 LAB · OCR de jugadas a lápiz</h1>
+  <div class="sub">Prueba LOCAL para medir si la IA lee bien las fotos. No toca tu app ni la base de datos. La key se usa solo aquí y no se guarda.</div>
+
+  <div class="card">
+    <label>1) API key de Google Gemini (gratis · ai.google.dev → "Get API key")</label>
+    <input id="key" type="password" placeholder="Pega aquí tu key gratis (solo local)">
+    <label>Modelo</label>
+    <select id="model">
+      <option value="gemini-2.5-flash">gemini-2.5-flash (rápido, recomendado)</option>
+      <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+      <option value="gemini-2.5-pro">gemini-2.5-pro (más preciso, más lento)</option>
+      <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+    </select>
+    <div class="note">La key gratis se guarda en tu navegador local (localStorage) para no repegar. Bórrala con el botón de abajo cuando termines.</div>
+  </div>
+
+  <div class="card">
+    <label>2) Foto de la jugada (toma con cámara o sube archivo)</label>
+    <input id="file" type="file" accept="image/*" capture="environment">
+    <img id="preview" alt="preview">
+    <div class="note" id="imginfo"></div>
+  </div>
+
+  <div class="card">
+    <label>3) Instrucción para la IA (editable — la afinamos con tus ejemplos)</label>
+    <textarea id="prompt" style="min-height:170px"></textarea>
+  </div>
+
+  <button id="go" disabled>🔍 Reconocer jugada</button>
+
+  <div class="card" id="out" style="display:none">
+    <label>Texto que devolvió la IA (esto caería en tu caja de "Texto")</label>
+    <pre id="raw"></pre>
+    <label style="margin-top:12px">Cómo lo interpretaría tu app (reglas reales de parsearTexto)</label>
+    <pre id="parsed"></pre>
+    <div class="note" id="timing"></div>
+  </div>
+
+  <button id="clearkey" style="background:#3a2530;margin-top:18px">🗑️ Borrar la key guardada</button>
+
+<script>
+const DEFAULT_PROMPT = `Eres un lector experto de boletas de la bolita (lotería) escritas a mano, a lápiz, en español cubano.
+Te paso la FOTO de una boleta. Transcribe SOLO las jugadas, una por renglón, en este formato EXACTO:
+
+NN-MONTO
+
+Donde:
+- NN = el número jugado, de 0 a 99 (dos dígitos, ej. 05, 37, 98).
+- MONTO = la cantidad apostada (puede tener decimales con punto, ej. 10, 5.5, 12.50).
+- SIEMPRE separa con un guion. NUNCA dejes un espacio como separador.
+- Un solo renglón por jugada. Sin texto extra, sin encabezados, sin explicaciones.
+
+Casos a tener en cuenta:
+- El separador entre un número y su monto puede ser guion, raya, coma, "de", "con", "x" o un espacio. Tú SIEMPRE devuélvelo como NN-MONTO con guion.
+
+- CÓMO DECIDIR cuando hay VARIOS números o DOS COLUMNAS de números (regla clave, aplícala SIEMPRE):
+  1) SI HAY una FLECHA, llave, corchete, línea o un monto escrito UNA sola vez que aplica a TODO el grupo:
+     entonces TODOS los números (de TODAS las columnas) son jugadas DISTINTAS y CADA UNO lleva ESE mismo monto.
+     Devuelve un renglón por número: número-montoCompartido. (NO emparejes columna1 con columna2.)
+  2) SI NO HAY flecha ni un monto general:
+     entonces es una tabla de PARES: la columna IZQUIERDA es el número y la DERECHA es su monto.
+     Empareja por fila: númeroIzquierda-montoDerecha.
+  La presencia de la flecha / monto-único es lo que DECIDE: con flecha = monto compartido para todos;
+  sin flecha = pares número|monto.
+
+- Si una cifra está borrosa o dudosa, ponla igual pero agrega " ?" al final de ese renglón para que el humano la revise.
+- No inventes jugadas que no veas. Si la foto no tiene jugadas legibles, responde solo: (sin jugadas)`;
+
+const $ = id => document.getElementById(id);
+$('prompt').value = DEFAULT_PROMPT;
+$('key').value = localStorage.getItem('lab_gemini_key') || '';
+
+let imgB64 = null, imgMime = 'image/jpeg';
+
+function refreshGo(){ $('go').disabled = !(imgB64 && $('key').value.trim()); }
+$('key').addEventListener('input', ()=>{ localStorage.setItem('lab_gemini_key', $('key').value.trim()); refreshGo(); });
+$('clearkey').onclick = ()=>{ localStorage.removeItem('lab_gemini_key'); $('key').value=''; refreshGo(); alert('Key borrada de este navegador.'); };
+
+// Comprime la imagen a máx 1280px lado mayor, JPEG ~0.75 (menos datos = más rápido/barato)
+$('file').onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const img = new Image();
+  img.onload = () => {
+    const max = 1280;
+    let {width:w, height:h} = img;
+    if (Math.max(w,h) > max){ const s = max/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
+    const c = document.createElement('canvas'); c.width=w; c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    const dataUrl = c.toDataURL('image/jpeg', 0.75);
+    imgMime = 'image/jpeg';
+    imgB64 = dataUrl.split(',')[1];
+    $('preview').src = dataUrl; $('preview').style.display='block';
+    $('imginfo').textContent = `Comprimida a ${w}×${h}px · ~${Math.round(imgB64.length*0.75/1024)} KB`;
+    refreshGo();
+  };
+  img.src = URL.createObjectURL(f);
+};
+
+// Mismas reglas que separarLineaJugada/esLineaJugada de la app real
+function separarLineaJugada(l){
+  const norm = l.trim().replace(/\s+de\s+/i,'-').replace(/\s+con\s+/i,'-')
+    .replace(/_/g,'-').replace(/\s*-\s*/g,'-');
+  const idx = norm.indexOf('-'); if(idx<0) return null;
+  const pick = parseInt(norm.substring(0,idx).trim());
+  const monto = parseFloat(norm.substring(idx+1).trim().replace(',','.'));
+  if(isNaN(pick)||pick<0||pick>99) return null;
+  if(isNaN(monto)||monto<0.5) return null;
+  return { pick: String(pick).padStart(2,'0'), monto };
+}
+
+function mostrarParseo(txt){
+  const lineas = txt.split('\n').map(l=>l.trim()).filter(Boolean);
+  const out = []; let total=0, okN=0;
+  for(const l of lineas){
+    if(/sin jugadas/i.test(l)) { out.push('(la IA no vio jugadas)'); continue; }
+    const dudosa = /\?/.test(l);
+    const seg = separarLineaJugada(l.replace(/\?/g,''));
+    if(seg){ okN++; total+=seg.monto; out.push(`✓ Pick ${seg.pick} · ${seg.monto.toFixed(2)} CUP${dudosa?'  ⚠️ revisar':''}`); }
+    else out.push(`✗ no entendí: "${l}"`);
+  }
+  out.push(`\n— ${okN} jugada(s) válida(s) · total ${total.toFixed(2)} CUP`);
+  return out.join('\n');
+}
+
+$('go').onclick = async () => {
+  const key = $('key').value.trim(), model = $('model').value;
+  if(!imgB64 || !key) return;
+  $('go').disabled = true; $('go').textContent = '⏳ Leyendo...';
+  $('out').style.display='block'; $('raw').textContent='...'; $('parsed').textContent='';
+  const t0 = performance.now();
+  try{
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+    const body = {
+      contents: [{ parts: [ {text: $('prompt').value}, {inline_data:{mime_type:imgMime, data:imgB64}} ] }],
+      generationConfig: { temperature: 0 }
+    };
+    const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if(!r.ok){ $('raw').innerHTML = '<span class="bad">Error '+r.status+': '+(j.error?.message||JSON.stringify(j))+'</span>'; $('go').disabled=false; $('go').textContent='🔍 Reconocer jugada'; return; }
+    const txt = j.candidates?.[0]?.content?.parts?.map(p=>p.text).join('') || '(respuesta vacía)';
+    $('raw').textContent = txt;
+    $('parsed').textContent = mostrarParseo(txt);
+    $('timing').textContent = `Tardó ${((performance.now()-t0)/1000).toFixed(1)} s · modelo ${model}`;
+  }catch(err){
+    $('raw').innerHTML = '<span class="bad">Falló la llamada: '+err.message+'</span>';
+  }
+  $('go').disabled=false; $('go').textContent='🔍 Reconocer jugada';
+};
+</script>
+</body>
+</html>

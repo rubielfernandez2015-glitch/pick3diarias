@@ -1,5 +1,5 @@
-// La Bolita Plus · Service Worker v2
-const CACHE_NAME = 'bolita-v2';
+// La Bolita Plus · Service Worker v3
+const CACHE_NAME = 'bolita-v3';
 const OFFLINE_URL = '/';
 
 // Recursos que se cachean al instalar
