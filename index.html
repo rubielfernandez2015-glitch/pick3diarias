@@ -539,6 +539,7 @@ textarea{resize:vertical;min-height:50px;}
           <button type="button" onclick="const i=document.getElementById('ITX-foto-cam');i.value='';i.click();" style="flex:1;background:linear-gradient(135deg,#2a5a8a,#3a7ab0);color:#fff;border:none;border-radius:8px;padding:11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">📷 Tomar foto</button>
           <button type="button" onclick="const i=document.getElementById('ITX-foto-gal');i.value='';i.click();" style="flex:1;background:var(--b3);border:1px solid var(--br);color:var(--tx);border-radius:8px;padding:11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;">🖼️ Subir foto</button>
         </div>
+        <div style="font-size:10px;color:var(--t3);margin-bottom:8px;line-height:1.5;">📸 Para que lea bien: buena luz, boleta plana y enfocada, que llene la pantalla. Si sale algo mal, repite la foto o corrige el texto antes de Aceptar.</div>
         <div id="ITX-foto-stat" style="display:none;font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.5;"></div>
         <textarea id="ITX-texto" placeholder="25-10&#10;37 de 5.5&#10;98_10,5&#10;14 con 15" style="min-height:150px;font-family:monospace;font-size:13px;" oninput="parsearTexto()"></textarea>
         <div id="ITX-preview" style="display:none;margin-top:8px;background:rgba(96,214,255,.06);border:1px solid rgba(96,214,255,.3);border-radius:8px;padding:10px 13px;">
@@ -2131,7 +2132,7 @@ async function procesarFotoJugada(e){
   const stat=document.getElementById('ITX-foto-stat');
   if(!navigator.onLine){toast('Necesitas internet para leer la foto',true);return;}
   let img;
-  try{img=await comprimirImagen(f,1280,0.75);}
+  try{img=await comprimirImagen(f,1600,0.82);}
   catch{toast('No se pudo leer la imagen',true);return;}
   if(btn){btn.disabled=true;btn.style.opacity='0.6';}
   if(stat){stat.style.display='block';stat.textContent='⏳ Leyendo la foto…';}
@@ -2156,7 +2157,7 @@ async function procesarFotoJugada(e){
       return;
     }
     const ta=document.getElementById('ITX-texto');
-    ta.value=ta.value.trim()?(ta.value.trim()+'\n'+txt):txt;
+    ta.value=txt; // reemplaza (evita duplicar si re-tomas la misma boleta)
     parsearTexto();
     if(stat)stat.textContent='✓ Foto leída. REVISA la vista previa de abajo y corrige si algo salió mal antes de Aceptar.';
   }catch(err){
