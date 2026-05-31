@@ -65,8 +65,7 @@ const $ = id => document.getElementById(id);
 // Codigo de banca que viene en la URL (?b=ABC12), para medir quien usa la herramienta.
 const BANCA = (new URLSearchParams(location.search).get('b') || '').toUpperCase();
 
-let jugadas = [];      // {pick, monto}
-let fotosOK = 0, fotosErr = 0, noLeidas = 0, ultimoError = '';
+let fotosOK = 0, fotosErr = 0, noLeidas = 0, ultimoError = '', totalJugadasAhora = 0;
 
 // Mismas reglas que la app (NN-monto, separadores - _ espacio de con, coma decimal)
 function separar(l){
@@ -110,20 +109,22 @@ async function procesar(e){
   if(!files.length) return;
   if(!navigator.onLine){ $('stat').innerHTML='<span class="bad">Necesitas internet para leer las fotos.</span>'; return; }
   const ta = $('detalle');
+  $('card-res').style.display='block';
   for(let i=0;i<files.length;i++){
-    $('stat').textContent = `⏳ Leyendo foto ${i+1} de ${files.length}…`;
+    $('stat').textContent = `⏳ Leyendo foto ${i+1} de ${files.length}…  (${totalJugadasAhora} jugadas hasta ahora)`;
     try{
       const txt = await leerUna(files[i]);
       const lineas = txt.split('\n').map(l=>l.trim()).filter(l=>l && !/sin jugadas/i.test(l));
       if(lineas.length){ ta.value = ta.value.trim() ? (ta.value.trim()+'\n'+lineas.join('\n')) : lineas.join('\n'); }
       fotosOK++;
+      recalcular(); // muestra en vivo las jugadas encontradas hasta ahora
+      if(i < files.length-1) $('stat').textContent = `✓ Foto ${i+1} de ${files.length} leída · ${totalJugadasAhora} jugadas encontradas… leyendo la siguiente`;
     }catch(err){
       fotosErr++;
       ultimoError = err.message;
       $('stat').innerHTML = `<span class="bad">Foto ${i+1}: ${err.message}</span>`;
     }
   }
-  $('card-res').style.display='block';
   recalcular();
 }
 
@@ -136,6 +137,7 @@ function recalcular(){
     if(seg){ porNum[seg.pick] = (porNum[seg.pick]||0) + seg.monto; totalMonto += seg.monto; n++; }
     else noLeidas++;
   }
+  totalJugadasAhora = n;
   const nums = Object.keys(porNum).sort();
   const fecha = new Date().toLocaleDateString('es', {day:'2-digit',month:'2-digit',year:'numeric'});
 
