@@ -41,7 +41,7 @@ REGLAS GENERALES (muy importantes):
 - IGNORA los TOTALES (la suma de todo, normalmente DEBAJO o al final de las jugadas, a veces con "TOTAL" o en recuadro). OJO: un numero en CIRCULO o junto a una raya NO es total: es el MONTO de esa jugada o grupo.
 - NUNCA sumes tu los montos. Si un numero recibe varios montos, emite VARIAS lineas con el mismo numero; el sistema suma. Asi no hay errores de cuenta.
 - Lee el monto COMPLETO con todos sus digitos: un 10 no es 1, un 100 no es 10.
-- DIGITOS AMBIGUOS: cada hoja la escribe UNA sola persona con letra consistente. Si un digito no esta claro (ej. parece 2 o 7, 1 o 7, 0 o 6, 4 o 9, 1 o 0), COMPARALO con como esa misma persona escribio ESE mismo digito en OTRAS jugadas de la MISMA hoja y elige el que coincide con su estilo. NO decidas un digito aislado: usa el resto de la hoja como referencia.
+- DIGITOS AMBIGUOS: cada hoja la escribe UNA sola persona con letra consistente. Si un digito no esta claro (ej. parece 2 o 7, 1 o 7, 0 o 6, 4 o 9, 1 o 0), COMPARALO con como esa misma persona escribio ESE mismo digito en OTRAS jugadas de la MISMA hoja y elige el que coincide con su estilo. NO decidas un digito aislado: usa el resto de la hoja como referencia. Pista clave 2 vs 7: el 2 tiene una BASE o raya horizontal ABAJO; el 7 NO tiene base abajo (solo raya arriba y una diagonal). Si tiene base abajo, es 2.
 - Expande SIEMPRE grupos, terminales y rangos a numeros individuales 00-99.
 
 FORMATOS (expande todo a lineas NN-MONTO):
