@@ -39,6 +39,8 @@
   <div class="stat" id="stat"></div>
 
   <div class="card" id="card-res" style="display:none">
+    <label style="display:block;font-size:12px;color:var(--t2);margin-bottom:6px;line-height:1.5;">📝 Jugadas leídas — <b>revisa y corrige</b> si algo salió mal (ej. 10 leído como 1). El total se actualiza solo.</label>
+    <textarea id="detalle" oninput="recalcular()" style="width:100%;min-height:140px;background:var(--b3);border:1px solid var(--br);border-radius:8px;padding:10px;color:var(--tx);font-family:ui-monospace,monospace;font-size:14px;line-height:1.6;margin-bottom:12px;box-sizing:border-box;"></textarea>
     <pre id="resumen"></pre>
     <div class="row" style="margin-top:12px">
       <button class="b-vd" onclick="copiar()">📋 Copiar resumen</button>
@@ -105,35 +107,32 @@ async function procesar(e){
   const files = Array.from(e.target.files||[]);
   if(!files.length) return;
   if(!navigator.onLine){ $('stat').innerHTML='<span class="bad">Necesitas internet para leer las fotos.</span>'; return; }
+  const ta = $('detalle');
   for(let i=0;i<files.length;i++){
-    $('stat').textContent = `⏳ Leyendo foto ${i+1} de ${files.length}…  (acumuladas: ${jugadas.length} jugadas)`;
+    $('stat').textContent = `⏳ Leyendo foto ${i+1} de ${files.length}…`;
     try{
       const txt = await leerUna(files[i]);
-      const lineas = txt.split('\n').map(l=>l.trim()).filter(Boolean);
-      let algo=false;
-      for(const l of lineas){
-        if(/sin jugadas/i.test(l)) continue;
-        const seg = separar(l.replace(/\?/g,''));
-        if(seg){ jugadas.push(seg); algo=true; }
-        else noLeidas++;
-      }
-      fotosOK++; if(!algo){/* foto sin jugadas legibles */}
+      const lineas = txt.split('\n').map(l=>l.trim()).filter(l=>l && !/sin jugadas/i.test(l));
+      if(lineas.length){ ta.value = ta.value.trim() ? (ta.value.trim()+'\n'+lineas.join('\n')) : lineas.join('\n'); }
+      fotosOK++;
     }catch(err){
       fotosErr++;
       ultimoError = err.message;
       $('stat').innerHTML = `<span class="bad">Foto ${i+1}: ${err.message}</span>`;
     }
   }
-  render();
+  $('card-res').style.display='block';
+  recalcular();
 }
 
-function render(){
-  // Agrupar por numero
-  const porNum = {};
-  let totalMonto = 0;
-  for(const j of jugadas){
-    porNum[j.pick] = (porNum[j.pick]||0) + j.monto;
-    totalMonto += j.monto;
+function recalcular(){
+  // Lee la lista editable (la persona pudo corregir) y arma el resumen.
+  const lineas = $('detalle').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  const porNum = {}; let totalMonto = 0, n = 0; noLeidas = 0;
+  for(const l of lineas){
+    const seg = separar(l.replace(/\?/g,''));
+    if(seg){ porNum[seg.pick] = (porNum[seg.pick]||0) + seg.monto; totalMonto += seg.monto; n++; }
+    else noLeidas++;
   }
   const nums = Object.keys(porNum).sort();
   const fecha = new Date().toLocaleDateString('es', {day:'2-digit',month:'2-digit',year:'numeric'});
@@ -141,23 +140,22 @@ function render(){
   let txt = `🎯 RESUMEN DEL DÍA — ${fecha}\n`;
   txt += `━━━━━━━━━━━━━━━\n`;
   txt += `Nº  →  total\n`;
-  for(const n of nums){ txt += `${n}  →  ${porNum[n].toFixed(2)}\n`; }
+  for(const x of nums){ txt += `${x}  →  ${porNum[x].toFixed(2)}\n`; }
   txt += `━━━━━━━━━━━━━━━\n`;
   txt += `Números distintos: ${nums.length}\n`;
-  txt += `Total de jugadas: ${jugadas.length}\n`;
+  txt += `Total de jugadas: ${n}\n`;
   txt += `TOTAL: ${totalMonto.toFixed(2)} CUP`;
 
   $('resumen').textContent = txt;
-  $('card-res').style.display = jugadas.length||fotosErr||noLeidas ? 'block':'none';
 
   let avisos = [];
   if(fotosOK) avisos.push(`✓ ${fotosOK} foto(s) leída(s)`);
-  if(noLeidas) avisos.push(`⚠️ ${noLeidas} renglón(es) no se entendieron — revisa los papeles dudosos`);
+  if(noLeidas) avisos.push(`⚠️ ${noLeidas} renglón(es) en la lista no son válidos`);
   if(fotosErr) avisos.push(`✗ ${fotosErr} foto(s) fallaron: ${ultimoError}`);
   $('aviso').textContent = avisos.join(' · ');
-  if(jugadas.length) $('stat').textContent = 'Listo. Revisa el resumen abajo.';
+  if(n) $('stat').textContent = 'Revisa la lista y corrige lo que veas mal; el total se actualiza solo.';
   else if(fotosErr) $('stat').innerHTML = `<span class="bad">Error: ${ultimoError}</span>`;
-  else $('stat').textContent = 'No se detectaron jugadas en la(s) foto(s). Prueba con mejor luz/enfoque.';
+  else $('stat').textContent = 'No se detectaron jugadas. Prueba con mejor luz/enfoque.';
 }
 
 function copiar(){
@@ -168,8 +166,8 @@ function copiar(){
 }
 
 function reiniciar(){
-  jugadas = []; fotosOK=0; fotosErr=0; noLeidas=0;
-  $('resumen').textContent=''; $('card-res').style.display='none';
+  fotosOK=0; fotosErr=0; noLeidas=0; ultimoError='';
+  $('detalle').value=''; $('resumen').textContent=''; $('card-res').style.display='none';
   $('aviso').textContent=''; $('stat').textContent='Listo para empezar de nuevo.';
 }
 </script>
