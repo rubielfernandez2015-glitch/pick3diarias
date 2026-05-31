@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Resumen de jugadas por foto</title>
+<style>
+  :root{--bg:#0f1419;--b2:#1a2129;--b3:#222c36;--br:#33404d;--tx:#e6edf3;--t2:#9fb0c0;--t3:#6b7c8c;--v:#1a7a4a;--vc:#25a060;--az:#3a7ab0;--rc:#e05555;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx);padding:16px;max-width:560px;margin:0 auto;}
+  h1{font-size:19px;margin:0 0 2px}
+  .sub{color:var(--t3);font-size:12px;margin-bottom:14px;line-height:1.5}
+  button{border:none;border-radius:10px;padding:13px;font-weight:700;cursor:pointer;font-family:inherit;font-size:15px;width:100%;}
+  .b-az{background:linear-gradient(135deg,#2a5a8a,var(--az));color:#fff}
+  .b-gr{background:var(--b3);border:1px solid var(--br);color:var(--tx)}
+  .b-vd{background:linear-gradient(135deg,var(--v),var(--vc));color:#fff}
+  .b-rj{background:#3a2530;border:1px solid #5a3540;color:#e7a3a3}
+  .row{display:flex;gap:8px;margin-bottom:8px}
+  .card{background:var(--b2);border:1px solid var(--br);border-radius:12px;padding:14px;margin-top:12px}
+  .stat{font-size:12px;color:var(--t2);margin-top:8px;min-height:18px;line-height:1.5}
+  pre{white-space:pre-wrap;word-break:break-word;background:var(--b3);border:1px solid var(--br);border-radius:8px;padding:12px;font-size:14px;margin:0;font-family:ui-monospace,monospace;line-height:1.6}
+  .big{font-family:ui-monospace,monospace}
+  .muted{color:var(--t3);font-size:11px;margin-top:6px;line-height:1.5}
+  .bad{color:var(--rc)}
+</style>
+</head>
+<body>
+  <h1>🎯 Resumen de jugadas por foto</h1>
+  <div class="sub">Carga las fotos de los papeles del día, la app las lee y te arma el resumen para enviar por WhatsApp. No guarda nada: al reiniciar, se borra todo.</div>
+
+  <input type="file" id="cam" accept="image/*" capture="environment" style="display:none" onchange="procesar(event)">
+  <input type="file" id="gal" accept="image/*" multiple style="display:none" onchange="procesar(event)">
+  <div class="row">
+    <button class="b-az" onclick="const i=document.getElementById('cam');i.value='';i.click();">📷 Tomar foto</button>
+    <button class="b-gr" onclick="const i=document.getElementById('gal');i.value='';i.click();">🖼️ Subir fotos</button>
+  </div>
+  <div class="muted">Puedes subir varias fotos a la vez. Para que lea bien: buena luz, papel plano y enfocado.</div>
+  <div class="stat" id="stat"></div>
+
+  <div class="card" id="card-res" style="display:none">
+    <pre id="resumen"></pre>
+    <div class="row" style="margin-top:12px">
+      <button class="b-vd" onclick="copiar()">📋 Copiar resumen</button>
+    </div>
+    <div class="row">
+      <button class="b-rj" onclick="reiniciar()">🗑️ Reiniciar (borra todo)</button>
+    </div>
+    <div class="muted" id="aviso"></div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ===== CONFIG =====
+const SUPABASE_URL = 'https://soshfmpdymryihimcwik.supabase.co';
+const ANON_KEY = 'sb_publishable_QOgtf6qkSYVmaRR-S7yeCg_r2cvlQqv';
+// Debe coincidir con el secreto RESUMEN_TOOL_KEY que pongas en Supabase.
+const TOOL_KEY = 'resumen-bolita-7K2p9Xq';
+// ==================
+
+const sb = supabase.createClient(SUPABASE_URL, ANON_KEY);
+const $ = id => document.getElementById(id);
+
+let jugadas = [];      // {pick, monto}
+let fotosOK = 0, fotosErr = 0, noLeidas = 0;
+
+// Mismas reglas que la app (NN-monto, separadores - _ espacio de con, coma decimal)
+function separar(l){
+  const norm = l.trim().replace(/\s+de\s+/i,'-').replace(/\s+con\s+/i,'-')
+    .replace(/_/g,'-').replace(/\s*-\s*/g,'-').replace(/^(\d{1,2})\s+(\d)/,'$1-$2');
+  const idx = norm.indexOf('-'); if(idx<0) return null;
+  const pick = parseInt(norm.substring(0,idx).trim());
+  const monto = parseFloat(norm.substring(idx+1).trim().replace(',','.'));
+  if(isNaN(pick)||pick<0||pick>99) return null;
+  if(isNaN(monto)||monto<0.5) return null;
+  return { pick: String(pick).padStart(2,'0'), monto };
+}
+
+async function comprimir(file){
+  let src,w,h;
+  try{ src=await createImageBitmap(file,{imageOrientation:'from-image'}); w=src.width; h=src.height; }
+  catch{ src=await new Promise((r,j)=>{const im=new Image();im.onload=()=>r(im);im.onerror=()=>j(new Error('img'));im.src=URL.createObjectURL(file);}); w=src.width; h=src.height; }
+  const max=1600; if(Math.max(w,h)>max){const s=max/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s);}
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  c.getContext('2d').drawImage(src,0,0,w,h);
+  if(src.close)src.close();
+  return c.toDataURL('image/jpeg',0.82).split(',')[1];
+}
+
+async function leerUna(file){
+  const b64 = await comprimir(file);
+  const { data, error } = await sb.functions.invoke('recognize-jugada', {
+    body: { image_b64: b64, mime: 'image/jpeg', tool: TOOL_KEY }
+  });
+  if(error){
+    let det = error.message||'';
+    try{ if(error.context&&error.context.json){ const j=await error.context.json(); if(j&&j.error)det=j.error; } }catch{}
+    if(/quota|exceeded|RESOURCE_EXHAUSTED|rate.?limit|\b429\b/i.test(det)) det='Demasiadas fotos seguidas. Espera ~1 minuto.';
+    throw new Error(det);
+  }
+  return ((data&&data.text)||'').trim();
+}
+
+async function procesar(e){
+  const files = Array.from(e.target.files||[]);
+  if(!files.length) return;
+  if(!navigator.onLine){ $('stat').innerHTML='<span class="bad">Necesitas internet para leer las fotos.</span>'; return; }
+  for(let i=0;i<files.length;i++){
+    $('stat').textContent = `⏳ Leyendo foto ${i+1} de ${files.length}…  (acumuladas: ${jugadas.length} jugadas)`;
+    try{
+      const txt = await leerUna(files[i]);
+      const lineas = txt.split('\n').map(l=>l.trim()).filter(Boolean);
+      let algo=false;
+      for(const l of lineas){
+        if(/sin jugadas/i.test(l)) continue;
+        const seg = separar(l.replace(/\?/g,''));
+        if(seg){ jugadas.push(seg); algo=true; }
+        else noLeidas++;
+      }
+      fotosOK++; if(!algo){/* foto sin jugadas legibles */}
+    }catch(err){
+      fotosErr++;
+      $('stat').innerHTML = `<span class="bad">Foto ${i+1}: ${err.message}</span>`;
+    }
+  }
+  render();
+}
+
+function render(){
+  // Agrupar por numero
+  const porNum = {};
+  let totalMonto = 0;
+  for(const j of jugadas){
+    porNum[j.pick] = (porNum[j.pick]||0) + j.monto;
+    totalMonto += j.monto;
+  }
+  const nums = Object.keys(porNum).sort();
+  const fecha = new Date().toLocaleDateString('es', {day:'2-digit',month:'2-digit',year:'numeric'});
+
+  let txt = `🎯 RESUMEN DEL DÍA — ${fecha}\n`;
+  txt += `━━━━━━━━━━━━━━━\n`;
+  txt += `Nº  →  total\n`;
+  for(const n of nums){ txt += `${n}  →  ${porNum[n].toFixed(2)}\n`; }
+  txt += `━━━━━━━━━━━━━━━\n`;
+  txt += `Números distintos: ${nums.length}\n`;
+  txt += `Total de jugadas: ${jugadas.length}\n`;
+  txt += `TOTAL: ${totalMonto.toFixed(2)} CUP`;
+
+  $('resumen').textContent = txt;
+  $('card-res').style.display = jugadas.length||fotosErr||noLeidas ? 'block':'none';
+
+  let avisos = [];
+  if(fotosOK) avisos.push(`✓ ${fotosOK} foto(s) leída(s)`);
+  if(noLeidas) avisos.push(`⚠️ ${noLeidas} renglón(es) no se entendieron — revisa los papeles dudosos`);
+  if(fotosErr) avisos.push(`✗ ${fotosErr} foto(s) fallaron`);
+  $('aviso').textContent = avisos.join(' · ');
+  $('stat').textContent = jugadas.length ? `Listo. Revisa el resumen abajo.` : (fotosErr?'':'No se detectaron jugadas.');
+}
+
+function copiar(){
+  const txt = $('resumen').textContent;
+  navigator.clipboard.writeText(txt)
+    .then(()=>{ $('aviso').textContent='✓ Copiado. Pégalo en WhatsApp.'; })
+    .catch(()=>{ const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);$('aviso').textContent='✓ Copiado.'; });
+}
+
+function reiniciar(){
+  jugadas = []; fotosOK=0; fotosErr=0; noLeidas=0;
+  $('resumen').textContent=''; $('card-res').style.display='none';
+  $('aviso').textContent=''; $('stat').textContent='Listo para empezar de nuevo.';
+}
+</script>
+</body>
+</html>

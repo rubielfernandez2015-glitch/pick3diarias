@@ -12,6 +12,8 @@
 //                                   separadas por coma: "key1,key2,key3".
 //                                   Si una se queda sin cupo, prueba la siguiente.
 //   GEMINI_MODEL     (opcional)     por defecto gemini-2.5-flash
+//   RESUMEN_TOOL_KEY (opcional)     codigo de acceso para la herramienta de
+//                                   resumen (resumen.html), que no usa login.
 // (SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY los inyecta Supabase solo.)
 //
 // DESPLIEGUE: ver supabase/functions/README_DESPLIEGUE.md
@@ -57,9 +59,13 @@ const supabaseAdmin = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-// Valida al llamador. Devuelve true si es recolector con token vigente o
-// banquero con JWT valido. Asi nadie ajeno puede consumir la API de Gemini.
-async function autorizado(req: Request, token: string | null): Promise<boolean> {
+// Valida al llamador. Devuelve true si es recolector con token vigente,
+// banquero con JWT valido, o la herramienta de resumen con su codigo de acceso
+// (RESUMEN_TOOL_KEY). Asi nadie ajeno puede consumir la API de Gemini.
+async function autorizado(req: Request, token: string | null, toolKey: string | null): Promise<boolean> {
+  // Herramienta de resumen (sin login): codigo de acceso compartido.
+  const expectedTool = Deno.env.get("RESUMEN_TOOL_KEY");
+  if (expectedTool && toolKey && toolKey === expectedTool) return true;
   if (token) {
     const { data } = await supabaseAdmin
       .schema("banca")
@@ -87,14 +93,14 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { image_b64, mime, token } = await req.json();
+    const { image_b64, mime, token, tool } = await req.json();
     if (!image_b64) {
       return new Response(JSON.stringify({ error: "falta image_b64" }), {
         status: 400, headers: { ...CORS, "Content-Type": "application/json" },
       });
     }
 
-    if (!(await autorizado(req, token ?? null))) {
+    if (!(await autorizado(req, token ?? null, tool ?? null))) {
       return new Response(JSON.stringify({ error: "no autorizado" }), {
         status: 401, headers: { ...CORS, "Content-Type": "application/json" },
       });
