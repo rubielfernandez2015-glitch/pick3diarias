@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { image_b64, mime, token, tool } = await req.json();
+    const { image_b64, mime, token, tool, b } = await req.json();
     if (!image_b64) {
       return new Response(JSON.stringify({ error: "falta image_b64" }), {
         status: 400, headers: { ...CORS, "Content-Type": "application/json" },
@@ -136,6 +136,8 @@ Deno.serve(async (req) => {
       const gJson = await gRes.json();
       if (gRes.ok) {
         const text = gJson.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") || "";
+        // Metrica de uso de la herramienta de resumen (no falla la respuesta si esto falla).
+        if (b) { try { await supabaseAdmin.rpc("log_uso_resumen", { p_codigo: String(b) }); } catch (_) { /* ignorar */ } }
         return new Response(JSON.stringify({ text }), {
           headers: { ...CORS, "Content-Type": "application/json" },
         });

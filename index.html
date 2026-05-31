@@ -5031,7 +5031,13 @@ async function revertirCierreHuerfanas(fecha){
 let _ajustesModoRes='manual';
 
 // Herramienta externa de conteo por fotos (resumen.html, junto al index).
-function _urlResumen(){return new URL('resumen.html', location.href).href;}
+// Incluye el codigo de la banca (?b=) para medir quien la usa.
+function _urlResumen(){
+  const cod=(document.getElementById('AJ-codigo')?.textContent||'').trim();
+  const u=new URL('resumen.html', location.href);
+  if(cod && cod!=='--') u.searchParams.set('b', cod);
+  return u.href;
+}
 function abrirResumenTool(){window.open(_urlResumen(),'_blank');}
 function copiarLinkResumen(){
   const u=_urlResumen();

@@ -62,6 +62,8 @@ const TOOL_KEY = 'resumen-bolita-7K2p9Xq';
 
 const sb = supabase.createClient(SUPABASE_URL, ANON_KEY);
 const $ = id => document.getElementById(id);
+// Codigo de banca que viene en la URL (?b=ABC12), para medir quien usa la herramienta.
+const BANCA = (new URLSearchParams(location.search).get('b') || '').toUpperCase();
 
 let jugadas = [];      // {pick, monto}
 let fotosOK = 0, fotosErr = 0, noLeidas = 0, ultimoError = '';
@@ -92,7 +94,7 @@ async function comprimir(file){
 async function leerUna(file){
   const b64 = await comprimir(file);
   const { data, error } = await sb.functions.invoke('recognize-jugada', {
-    body: { image_b64: b64, mime: 'image/jpeg', tool: TOOL_KEY }
+    body: { image_b64: b64, mime: 'image/jpeg', tool: TOOL_KEY, b: BANCA }
   });
   if(error){
     let det = error.message||'';
