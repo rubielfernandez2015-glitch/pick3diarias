@@ -838,7 +838,7 @@ textarea{resize:vertical;min-height:50px;}
   <div class="CD">
     <div class="CT">⏰ Restricción de cierre</div>
     <div style="font-size:11px;color:var(--t3);margin-bottom:.9rem;line-height:1.6;">
-      <strong style="color:var(--tx);">Activada</strong>: el registro se cierra a la hora de corte (como hasta ahora), para ti y tu equipo.<br>
+      <strong style="color:var(--tx);">Activada</strong>: el registro se cierra a la hora de corte — <strong style="color:var(--dc);" id="AJ-corte-horas">--</strong> (hora del Este), para ti y tu equipo.<br>
       <strong style="color:var(--tx);">Desactivada</strong>: la sesión queda abierta hasta que apliques el resultado.
     </div>
     <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;color:var(--tx);">
@@ -5136,6 +5136,7 @@ async function loadAjustes(){
   const cdEl=document.getElementById('AJ-codigo');
   if(cdEl)cdEl.textContent=bq?.codigo||'--';
   // Cargar ajustes guardados
+  const chEl=document.getElementById('AJ-corte-horas');if(chEl)chEl.textContent=_fmt12(CORTE_DIA)+' (día) y '+_fmt12(CORTE_NOCHE)+' (noche)';
   const{data}=await sb.from('banquero_ajustes').select('*').eq('banquero_id',bId).maybeSingle();
   if(data){
     _ajustesModoRes=data.modo_resultado||'manual';
@@ -5301,6 +5302,8 @@ const CORTE_NOCHE= {h:21, m:35};
 let _registroDesbloqueado=false;
 let _registroDesbloqueadoRazon=null; // razón del corte al momento de desbloquear (anti-trampa: si cambia la razón, se invalida)
 let _corteActivo=true; // ajuste del banquero: restricción de cierre por hora (aplica a él y su equipo)
+// Formatea {h,m} a 12h (ej. {h:13,m:30} -> "1:30 PM"). Usa las constantes CORTE_DIA/CORTE_NOCHE.
+function _fmt12(o){let ap=o.h>=12?'PM':'AM';let h12=o.h%12;if(h12===0)h12=12;return h12+':'+String(o.m).padStart(2,'0')+' '+ap;}
 // Lee si la banca tiene activa la restricción de cierre por hora.
 async function refrescarCorteActivo(){
   try{
