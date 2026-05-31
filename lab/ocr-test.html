@@ -112,12 +112,12 @@ $('file').onchange = e => {
   const f = e.target.files[0]; if(!f) return;
   const img = new Image();
   img.onload = () => {
-    const max = 1600;
+    const max = 2048;
     let {width:w, height:h} = img;
     if (Math.max(w,h) > max){ const s = max/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
     const c = document.createElement('canvas'); c.width=w; c.height=h;
     c.getContext('2d').drawImage(img,0,0,w,h);
-    const dataUrl = c.toDataURL('image/jpeg', 0.82);
+    const dataUrl = c.toDataURL('image/jpeg', 0.9);
     imgMime = 'image/jpeg';
     imgB64 = dataUrl.split(',')[1];
     $('preview').src = dataUrl; $('preview').style.display='block';

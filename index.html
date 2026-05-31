@@ -2207,7 +2207,7 @@ async function procesarFotoJugada(e){
   const stat=document.getElementById('ITX-foto-stat');
   if(!navigator.onLine){toast('Necesitas internet para leer la foto',true);return;}
   let img;
-  try{img=await comprimirImagen(f,1600,0.82);}
+  try{img=await comprimirImagen(f,2048,0.9);}
   catch{toast('No se pudo leer la imagen',true);return;}
   if(btn){btn.disabled=true;btn.style.opacity='0.6';}
   if(stat){stat.style.display='block';stat.textContent='⏳ Leyendo la foto…';}

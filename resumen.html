@@ -83,11 +83,11 @@ async function comprimir(file){
   let src,w,h;
   try{ src=await createImageBitmap(file,{imageOrientation:'from-image'}); w=src.width; h=src.height; }
   catch{ src=await new Promise((r,j)=>{const im=new Image();im.onload=()=>r(im);im.onerror=()=>j(new Error('img'));im.src=URL.createObjectURL(file);}); w=src.width; h=src.height; }
-  const max=1600; if(Math.max(w,h)>max){const s=max/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s);}
+  const max=2048; if(Math.max(w,h)>max){const s=max/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s);}
   const c=document.createElement('canvas');c.width=w;c.height=h;
   c.getContext('2d').drawImage(src,0,0,w,h);
   if(src.close)src.close();
-  return c.toDataURL('image/jpeg',0.82).split(',')[1];
+  return c.toDataURL('image/jpeg',0.9).split(',')[1];
 }
 
 async function leerUna(file){
