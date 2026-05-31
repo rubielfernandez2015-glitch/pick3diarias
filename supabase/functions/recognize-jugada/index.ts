@@ -40,6 +40,7 @@ Donde:
 
 Casos a tener en cuenta:
 - El separador entre un numero y su monto puede ser guion, raya, coma, "de", "con", "x" o un espacio: tu SIEMPRE devuelve NN-MONTO con guion.
+- LEE EL MONTO COMPLETO con TODOS sus digitos: no te comas ceros ni cifras. Un 10 NO es 1, un 20 NO es 2, un 50 NO es 5, un 100 NO es 10. Fijate bien en el ultimo digito del monto.
 
 - COMO DECIDIR cuando hay VARIOS numeros o DOS COLUMNAS de numeros (regla clave, aplicala SIEMPRE):
   1) SI HAY una FLECHA, llave, corchete, linea o un monto escrito UNA sola vez que aplica a TODO el grupo:
