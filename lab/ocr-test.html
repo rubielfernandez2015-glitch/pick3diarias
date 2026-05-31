@@ -66,33 +66,34 @@
   <button id="clearkey" style="background:#3a2530;margin-top:18px">🗑️ Borrar la key guardada</button>
 
 <script>
-const DEFAULT_PROMPT = `Eres un lector experto de boletas de la bolita (lotería) escritas a mano, a lápiz, en español cubano.
-Te paso la FOTO de una boleta. Transcribe SOLO las jugadas, una por renglón, en este formato EXACTO:
+const DEFAULT_PROMPT = `Eres un experto leyendo apuestas de la bolita (lotería) cubana en fotos, hojas manuscritas y mensajes de WhatsApp.
+
+OBJETIVO: extraer TODOS los números jugados (de 00 a 99) con su monto y devolver UNA línea por cada par número-monto, en este formato EXACTO:
 
 NN-MONTO
 
-Donde:
-- NN = el número jugado, de 0 a 99 (dos dígitos, ej. 05, 37, 98).
-- MONTO = la cantidad apostada (puede tener decimales con punto, ej. 10, 5.5, 12.50).
-- SIEMPRE separa con un guion. NUNCA dejes un espacio como separador.
-- Un solo renglón por jugada. Sin texto extra, sin encabezados, sin explicaciones.
+(NN = número de dos dígitos 00-99; MONTO = cantidad, con punto si tiene decimales; SIEMPRE con un guion; una línea por par; sin texto extra ni encabezados.)
 
-Casos a tener en cuenta:
-- El separador entre un número y su monto puede ser guion, raya, coma, "de", "con", "x" o un espacio. Tú SIEMPRE devuélvelo como NN-MONTO con guion.
-- LEE EL MONTO COMPLETO con TODOS sus dígitos: no te comas ceros ni cifras. Un 10 NO es 1, un 20 NO es 2, un 50 NO es 5, un 100 NO es 10. Fíjate bien en el último dígito del monto.
+REGLAS GENERALES (muy importantes):
+- IGNORA los NOMBRES de personas/clientes (ej. Pedro, Tomás, Bordo, Mar, Alana). No son jugadas.
+- IGNORA fechas y referencias de día (ej. 30, 31, "día 30", "31-Dic"). No son apuestas.
+- NUNCA sumes tú los montos. Si un número recibe varios montos, emite VARIAS líneas con el mismo número; el sistema suma. Así no hay errores de cuenta.
+- Lee el monto COMPLETO con todos sus dígitos: un 10 no es 1, un 100 no es 10.
+- Expande SIEMPRE grupos, terminales y rangos a números individuales 00-99.
 
-- CÓMO DECIDIR cuando hay VARIOS números o DOS COLUMNAS de números (regla clave, aplícala SIEMPRE):
-  1) SI HAY una FLECHA, llave, corchete, línea o un monto escrito UNA sola vez que aplica a TODO el grupo:
-     entonces TODOS los números (de TODAS las columnas) son jugadas DISTINTAS y CADA UNO lleva ESE mismo monto.
-     Devuelve un renglón por número: número-montoCompartido. (NO emparejes columna1 con columna2.)
-  2) SI NO HAY flecha ni un monto general:
-     entonces es una tabla de PARES: la columna IZQUIERDA es el número y la DERECHA es su monto.
-     Empareja por fila: númeroIzquierda-montoDerecha.
-  La presencia de la flecha / monto-único es lo que DECIDE: con flecha = monto compartido para todos;
-  sin flecha = pares número|monto.
+FORMATOS (expande todo a líneas NN-MONTO):
+1) NÚMERO-MONTO directo: "49-30" -> 49-30 ; "50-1350" -> 50-1350. El monto puede venir como número pequeño al lado o arriba con una rayita: "14 |50" -> 14-50.
+2) COLUMNAS: si una columna son números y al lado/arriba está su monto (alineados por fila), emparéjalos: númeroIzq-montoDer.
+3) GRUPO CON MONTO COMÚN: varios números que comparten UN monto, señalado con "de 50", un monto escrito una sola vez, una FLECHA, raya larga (----->), llave o candado. Repite cada número del grupo con ese monto.
+   - Asteriscos (WhatsApp): "44*22*66*77*99 de 50" -> 44-50,22-50,66-50,77-50,99-50.
+   - Dígitos pegados en pares: "10203040 de 100" -> 10-100,20-100,30-100,40-100.
+4) RANGO: con la palabra "al", o con guion cuando hay "= monto". "01 al 10 = 40" -> 01-40,02-40,...,10-40 ; "20-29 = 50" -> 20-50,21-50,...,29-50. (El guion es RANGO solo si los dos lados son números y hay "= monto" o "al"; un "número-monto" suelto NO es rango.)
+5) TERMINAL ("afuera" o "terminal"): un solo dígito = TODOS los números que TERMINAN en ese dígito. "0 afuera de 150" -> 00-150,10-150,20-150,...,90-150 ; "1 afuera de 250" -> 01-250,11-250,...,91-250 ; "terminal 2 de 100" -> 02-100,12-100,...,92-100.
+6) UN NÚMERO CON VARIOS APORTES: "01 = 35-10-20-25-200" -> 01-35,01-10,01-20,01-25,01-200 (una línea por aporte; el sistema suma). Si una terminal recibe varios montos ("terminal 2 -> 100 750"), por cada número de la terminal emite una línea por cada monto (02-100, 02-750, 12-100, 12-750, ... , 92-100, 92-750).
 
-- Si una cifra está borrosa o dudosa, ponla igual pero agrega " ?" al final de ese renglón para que el humano la revise.
-- No inventes jugadas que no veas. Si la foto no tiene jugadas legibles, responde solo: (sin jugadas)`;
+DUDAS:
+- Si una cifra está borrosa o dudosa, ponla igual y agrega " ?" al final del renglón.
+- No inventes números que no veas. Si no hay jugadas legibles, responde solo: (sin jugadas)`;
 
 const $ = id => document.getElementById(id);
 $('prompt').value = DEFAULT_PROMPT;
@@ -109,12 +110,12 @@ $('file').onchange = e => {
   const f = e.target.files[0]; if(!f) return;
   const img = new Image();
   img.onload = () => {
-    const max = 1280;
+    const max = 1600;
     let {width:w, height:h} = img;
     if (Math.max(w,h) > max){ const s = max/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
     const c = document.createElement('canvas'); c.width=w; c.height=h;
     c.getContext('2d').drawImage(img,0,0,w,h);
-    const dataUrl = c.toDataURL('image/jpeg', 0.75);
+    const dataUrl = c.toDataURL('image/jpeg', 0.82);
     imgMime = 'image/jpeg';
     imgB64 = dataUrl.split(',')[1];
     $('preview').src = dataUrl; $('preview').style.display='block';

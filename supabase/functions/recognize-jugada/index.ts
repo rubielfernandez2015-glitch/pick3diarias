@@ -27,33 +27,34 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const PROMPT = `Eres un lector experto de boletas de la bolita (loteria) escritas a mano, a lapiz, en espanol cubano.
-Te paso la FOTO de una boleta. Transcribe SOLO las jugadas, una por renglon, en este formato EXACTO:
+const PROMPT = `Eres un experto leyendo apuestas de la bolita (loteria) cubana en fotos, hojas manuscritas y mensajes de WhatsApp.
+
+OBJETIVO: extraer TODOS los numeros jugados (de 00 a 99) con su monto y devolver UNA linea por cada par numero-monto, en este formato EXACTO:
 
 NN-MONTO
 
-Donde:
-- NN = el numero jugado, de 0 a 99 (dos digitos, ej. 05, 37, 98).
-- MONTO = la cantidad apostada (decimales con punto, ej. 10, 5.5, 12.50).
-- SIEMPRE separa con un guion. NUNCA dejes un espacio como separador.
-- Un solo renglon por jugada. Sin texto extra, sin encabezados, sin explicaciones.
+(NN = numero de dos digitos 00-99; MONTO = cantidad, con punto si tiene decimales; SIEMPRE con un guion; una linea por par; sin texto extra ni encabezados.)
 
-Casos a tener en cuenta:
-- El separador entre un numero y su monto puede ser guion, raya, coma, "de", "con", "x" o un espacio: tu SIEMPRE devuelve NN-MONTO con guion.
-- LEE EL MONTO COMPLETO con TODOS sus digitos: no te comas ceros ni cifras. Un 10 NO es 1, un 20 NO es 2, un 50 NO es 5, un 100 NO es 10. Fijate bien en el ultimo digito del monto.
+REGLAS GENERALES (muy importantes):
+- IGNORA los NOMBRES de personas/clientes (ej. Pedro, Tomas, Bordo, Mar, Alana). No son jugadas.
+- IGNORA fechas y referencias de dia (ej. 30, 31, "dia 30", "31-Dic"). No son apuestas.
+- NUNCA sumes tu los montos. Si un numero recibe varios montos, emite VARIAS lineas con el mismo numero; el sistema suma. Asi no hay errores de cuenta.
+- Lee el monto COMPLETO con todos sus digitos: un 10 no es 1, un 100 no es 10.
+- Expande SIEMPRE grupos, terminales y rangos a numeros individuales 00-99.
 
-- COMO DECIDIR cuando hay VARIOS numeros o DOS COLUMNAS de numeros (regla clave, aplicala SIEMPRE):
-  1) SI HAY una FLECHA, llave, corchete, linea o un monto escrito UNA sola vez que aplica a TODO el grupo:
-     entonces TODOS los numeros (de TODAS las columnas) son jugadas DISTINTAS y CADA UNO lleva ESE mismo monto.
-     Devuelve un renglon por numero: numero-montoCompartido. (NO emparejes columna1 con columna2.)
-  2) SI NO HAY flecha ni un monto general:
-     entonces es una tabla de PARES: la columna IZQUIERDA es el numero y la DERECHA es su monto.
-     Empareja por fila: numeroIzquierda-montoDerecha.
-  La presencia de la flecha / monto-unico es lo que DECIDE: con flecha = monto compartido para todos;
-  sin flecha = pares numero|monto.
+FORMATOS (expande todo a lineas NN-MONTO):
+1) NUMERO-MONTO directo: "49-30" -> 49-30 ; "50-1350" -> 50-1350. El monto puede venir como numero pequeno al lado o arriba con una rayita: "14 |50" -> 14-50.
+2) COLUMNAS: si una columna son numeros y al lado/arriba esta su monto (alineados por fila), emparejalos: numeroIzq-montoDer.
+3) GRUPO CON MONTO COMUN: varios numeros que comparten UN monto, senalado con "de 50", un monto escrito una sola vez, una FLECHA, raya larga (----->), llave o candado. Repite cada numero del grupo con ese monto.
+   - Asteriscos (WhatsApp): "44*22*66*77*99 de 50" -> 44-50,22-50,66-50,77-50,99-50.
+   - Digitos pegados en pares: "10203040 de 100" -> 10-100,20-100,30-100,40-100.
+4) RANGO: con la palabra "al", o con guion cuando hay "= monto". "01 al 10 = 40" -> 01-40,02-40,...,10-40 ; "20-29 = 50" -> 20-50,21-50,...,29-50. (El guion es RANGO solo si los dos lados son numeros y hay "= monto" o "al"; un "numero-monto" suelto NO es rango.)
+5) TERMINAL ("afuera" o "terminal"): un solo digito = TODOS los numeros que TERMINAN en ese digito. "0 afuera de 150" -> 00-150,10-150,20-150,...,90-150 ; "1 afuera de 250" -> 01-250,11-250,...,91-250 ; "terminal 2 de 100" -> 02-100,12-100,...,92-100.
+6) UN NUMERO CON VARIOS APORTES: "01 = 35-10-20-25-200" -> 01-35,01-10,01-20,01-25,01-200 (una linea por aporte; el sistema suma). Si una terminal recibe varios montos ("terminal 2 -> 100 750"), por cada numero de la terminal emite una linea por cada monto (02-100, 02-750, 12-100, 12-750, ... , 92-100, 92-750).
 
-- Si una cifra esta borrosa o dudosa, ponla igual pero agrega " ?" al final de ese renglon.
-- No inventes jugadas que no veas. Si no hay jugadas legibles, responde solo: (sin jugadas)`;
+DUDAS:
+- Si una cifra esta borrosa o dudosa, ponla igual y agrega " ?" al final del renglon.
+- No inventes numeros que no veas. Si no hay jugadas legibles, responde solo: (sin jugadas)`;
 
 const supabaseAdmin = createClient(
   Deno.env.get("SUPABASE_URL")!,
