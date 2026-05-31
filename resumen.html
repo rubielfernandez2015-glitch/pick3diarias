@@ -36,6 +36,18 @@
     <button class="b-gr" onclick="const i=document.getElementById('gal');i.value='';i.click();">🖼️ Subir fotos</button>
   </div>
   <div class="muted">Puedes subir varias fotos a la vez. Para que lea bien: buena luz, papel plano y enfocado.</div>
+  <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:var(--t2);">
+    <span>¿Hoja de varias columnas?</span>
+    <select id="cols" style="background:var(--b3);border:1px solid var(--br);color:var(--tx);border-radius:6px;padding:6px 8px;font-size:13px;">
+      <option value="1">1 columna (normal)</option>
+      <option value="2">2 columnas</option>
+      <option value="3">3 columnas</option>
+      <option value="4">4 columnas</option>
+      <option value="5">5 columnas</option>
+      <option value="6">6 columnas</option>
+    </select>
+  </div>
+  <div class="muted">Si la hoja viene en columnas (como la libreta), elige cuántas: el sistema la <b>parte y lee cada columna sola</b> (lee mucho mejor y no cruza columnas).</div>
   <div class="stat" id="stat"></div>
 
   <div class="card" id="card-res" style="display:none">
@@ -79,19 +91,29 @@ function separar(l){
   return { pick: String(pick).padStart(2,'0'), monto };
 }
 
-async function comprimir(file){
-  let src,w,h;
-  try{ src=await createImageBitmap(file,{imageOrientation:'from-image'}); w=src.width; h=src.height; }
-  catch{ src=await new Promise((r,j)=>{const im=new Image();im.onload=()=>r(im);im.onerror=()=>j(new Error('img'));im.src=URL.createObjectURL(file);}); w=src.width; h=src.height; }
-  const max=2048; if(Math.max(w,h)>max){const s=max/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s);}
-  const c=document.createElement('canvas');c.width=w;c.height=h;
-  c.getContext('2d').drawImage(src,0,0,w,h);
+// Parte la imagen (desde el ORIGINAL) en n tiras verticales = columnas. Cada tira
+// se lee sola: la IA no cruza columnas y los digitos van mas grandes. n=1 = entera.
+async function recortarColumnas(file, n){
+  let src,W,H;
+  try{ src=await createImageBitmap(file,{imageOrientation:'from-image'}); }
+  catch{ src=await new Promise((r,j)=>{const im=new Image();im.onload=()=>r(im);im.onerror=()=>j(new Error('img'));im.src=URL.createObjectURL(file);}); }
+  W=src.width; H=src.height;
+  const target = n>1 ? 2600 : 2048;
+  const out=[];
+  for(let i=0;i<n;i++){
+    const sx=Math.floor(W*i/n), sw=Math.min(Math.ceil(W/n), W-Math.floor(W*i/n));
+    let dw=sw, dh=H;
+    const sc=target/Math.max(dw,dh);
+    if(sc<1){ dw=Math.round(dw*sc); dh=Math.round(dh*sc); }
+    const c=document.createElement('canvas'); c.width=dw; c.height=dh;
+    c.getContext('2d').drawImage(src, sx,0, sw,H, 0,0, dw,dh);
+    out.push(c.toDataURL('image/jpeg',0.9).split(',')[1]);
+  }
   if(src.close)src.close();
-  return c.toDataURL('image/jpeg',0.9).split(',')[1];
+  return out;
 }
 
-async function leerUna(file){
-  const b64 = await comprimir(file);
+async function leerB64(b64){
   const { data, error } = await sb.functions.invoke('recognize-jugada', {
     body: { image_b64: b64, mime: 'image/jpeg', tool: TOOL_KEY, b: BANCA }
   });
@@ -108,21 +130,30 @@ async function procesar(e){
   const files = Array.from(e.target.files||[]);
   if(!files.length) return;
   if(!navigator.onLine){ $('stat').innerHTML='<span class="bad">Necesitas internet para leer las fotos.</span>'; return; }
+  const ncols = parseInt(($('cols')||{}).value||'1') || 1;
   const ta = $('detalle');
   $('card-res').style.display='block';
-  for(let i=0;i<files.length;i++){
-    $('stat').textContent = `⏳ Leyendo foto ${i+1} de ${files.length}…  (${totalJugadasAhora} jugadas hasta ahora)`;
+  // Cada foto se parte en ncols columnas (tiras); cada tira se lee por separado.
+  const trozos = [];
+  for(const f of files){
+    try{ const strips = await recortarColumnas(f, ncols); strips.forEach(s => trozos.push(s)); }
+    catch{ fotosErr++; ultimoError = 'no se pudo abrir la imagen'; }
+  }
+  const total = trozos.length;
+  const unidad = ncols>1 ? 'columna' : 'foto';
+  for(let i=0;i<total;i++){
+    $('stat').textContent = `⏳ Leyendo ${unidad} ${i+1} de ${total}…  (${totalJugadasAhora} jugadas hasta ahora)`;
     try{
-      const txt = await leerUna(files[i]);
+      const txt = await leerB64(trozos[i]);
       const lineas = txt.split('\n').map(l=>l.trim()).filter(l=>l && !/sin jugadas/i.test(l));
       if(lineas.length){ ta.value = ta.value.trim() ? (ta.value.trim()+'\n'+lineas.join('\n')) : lineas.join('\n'); }
       fotosOK++;
-      recalcular(); // muestra en vivo las jugadas encontradas hasta ahora
-      if(i < files.length-1) $('stat').textContent = `✓ Foto ${i+1} de ${files.length} leída · ${totalJugadasAhora} jugadas encontradas… leyendo la siguiente`;
+      recalcular(); // muestra en vivo lo que va leyendo
+      if(i < total-1) $('stat').textContent = `✓ ${unidad} ${i+1} de ${total} leída · ${totalJugadasAhora} jugadas… leyendo la siguiente`;
     }catch(err){
       fotosErr++;
       ultimoError = err.message;
-      $('stat').innerHTML = `<span class="bad">Foto ${i+1}: ${err.message}</span>`;
+      $('stat').innerHTML = `<span class="bad">${unidad} ${i+1}: ${err.message}</span>`;
     }
   }
   recalcular();
