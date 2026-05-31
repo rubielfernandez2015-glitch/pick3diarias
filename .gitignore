@@ -18,3 +18,7 @@ node_modules/
 *.code-workspace
 .vscode/
 .idea/
+
+# Fotos privadas de jugadas (NO publicar)
+Formatos de jugadas hoja/
+*.jpeg
