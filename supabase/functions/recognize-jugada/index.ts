@@ -37,19 +37,20 @@ NN-MONTO
 
 REGLAS GENERALES (muy importantes):
 - IGNORA los NOMBRES de personas/clientes (ej. Pedro, Tomas, Bordo, Mar, Alana). No son jugadas.
-- IGNORA fechas y referencias de dia (ej. 30, 31, "dia 30", "31-Dic"). No son apuestas.
+- IGNORA encabezados/referencias de FECHA (ej. "30/5", "31-Dic", "dia 30", "Noche", "Tarde"). PERO un numero que tiene su monto o aportes (ej. "30-240" o "30 = 30-15") SI es una jugada: incluelo. Solo ignora un numero si esta suelto como fecha, sin monto.
+- IGNORA los TOTALES (la suma de todo, normalmente DEBAJO o al final de las jugadas, a veces con "TOTAL" o en recuadro). OJO: un numero en CIRCULO o junto a una raya NO es total: es el MONTO de esa jugada o grupo.
 - NUNCA sumes tu los montos. Si un numero recibe varios montos, emite VARIAS lineas con el mismo numero; el sistema suma. Asi no hay errores de cuenta.
 - Lee el monto COMPLETO con todos sus digitos: un 10 no es 1, un 100 no es 10.
 - Expande SIEMPRE grupos, terminales y rangos a numeros individuales 00-99.
 
 FORMATOS (expande todo a lineas NN-MONTO):
-1) NUMERO-MONTO directo: "49-30" -> 49-30 ; "50-1350" -> 50-1350. El monto puede venir como numero pequeno al lado o arriba con una rayita: "14 |50" -> 14-50.
+1) NUMERO-MONTO directo: "49-30" -> 49-30 ; "50-1350" -> 50-1350. El monto puede venir como numero pequeno al lado/arriba ("14 |50" -> 14-50) o entre parentesis o circulo ("20=(100)" o "20 (100)" -> 20-100).
 2) COLUMNAS: si una columna son numeros y al lado/arriba esta su monto (alineados por fila), emparejalos: numeroIzq-montoDer.
-3) GRUPO CON MONTO COMUN: varios numeros que comparten UN monto, senalado con "de 50", un monto escrito una sola vez, una FLECHA, raya larga (----->), llave o candado. Repite cada numero del grupo con ese monto.
+3) GRUPO CON MONTO COMUN (raya/flecha): una RAYA o FLECHA (vertical o larga) que corre junto a una LISTA de numeros los AGRUPA; el monto escrito JUNTO a esa raya (arriba, al lado o en circulo) aplica a TODOS los numeros del grupo. En una columna puede haber VARIOS grupos divididos por rayas, cada uno con su monto. Tambien sirve "de 50" o un monto escrito una sola vez para el grupo. Repite cada numero del grupo con su monto.
    - Asteriscos (WhatsApp): "44*22*66*77*99 de 50" -> 44-50,22-50,66-50,77-50,99-50.
    - Digitos pegados en pares: "10203040 de 100" -> 10-100,20-100,30-100,40-100.
 4) RANGO: con la palabra "al", o con guion cuando hay "= monto". "01 al 10 = 40" -> 01-40,02-40,...,10-40 ; "20-29 = 50" -> 20-50,21-50,...,29-50. (El guion es RANGO solo si los dos lados son numeros y hay "= monto" o "al"; un "numero-monto" suelto NO es rango.)
-5) TERMINAL ("afuera" o "terminal"): un solo digito = TODOS los numeros que TERMINAN en ese digito. "0 afuera de 150" -> 00-150,10-150,20-150,...,90-150 ; "1 afuera de 250" -> 01-250,11-250,...,91-250 ; "terminal 2 de 100" -> 02-100,12-100,...,92-100.
+5) TERMINAL ("afuera"/"terminal") SOLO cuando lo dice explicito: un numero NUNCA se expande a terminal por si solo; en una hoja que lista numeros (01..99) cada uno es ESE numero individual con su(s) monto(s). Expande a terminal solo si dice "afuera" o "terminal", o es un rango de terminales ("10-00"). "0 afuera de 150" -> 00-150,10-150,...,90-150 ; "terminal 2 de 100" -> 02-100,12-100,...,92-100.
 6) UN NUMERO CON VARIOS APORTES: "01 = 35-10-20-25-200" -> 01-35,01-10,01-20,01-25,01-200 (una linea por aporte; el sistema suma). Si una terminal recibe varios montos ("terminal 2 -> 100 750"), por cada numero de la terminal emite una linea por cada monto (02-100, 02-750, 12-100, 12-750, ... , 92-100, 92-750).
 
 DUDAS:
