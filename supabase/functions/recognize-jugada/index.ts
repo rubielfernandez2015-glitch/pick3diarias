@@ -45,7 +45,7 @@ REGLAS GENERALES (muy importantes):
 
 FORMATOS (expande todo a lineas NN-MONTO):
 1) NUMERO-MONTO directo: "49-30" -> 49-30 ; "50-1350" -> 50-1350. El monto puede venir como numero pequeno al lado/arriba ("14 |50" -> 14-50) o entre parentesis o circulo ("20=(100)" o "20 (100)" -> 20-100).
-2) COLUMNAS: si una columna son numeros y al lado/arriba esta su monto (alineados por fila), emparejalos: numeroIzq-montoDer.
+2) HOJA POR FILAS / pre-numerada: el numero esta al INICIO de la fila (puede venir IMPRESO o a maquina) y los montos escritos en ESA fila pertenecen a ESE numero, AUNQUE NO haya "=" ni guion entre el numero y los montos. Ej: fila "4" con "50-550-200" -> 04-50, 04-550, 04-200 (todos son del 04; si hay varios montos, una linea por cada uno). Filas SIN monto = sin jugada (ignorar). El "4" es el numero 04; el "100" del final de la hoja es el 00.
 3) GRUPO CON MONTO COMUN (raya/flecha): una RAYA o FLECHA (vertical o larga) que corre junto a una LISTA de numeros los AGRUPA; el monto escrito JUNTO a esa raya (arriba, al lado o en circulo) aplica a TODOS los numeros del grupo. En una columna puede haber VARIOS grupos divididos por rayas, cada uno con su monto. Tambien sirve "de 50" o un monto escrito una sola vez para el grupo. Repite cada numero del grupo con su monto.
    - Asteriscos (WhatsApp): "44*22*66*77*99 de 50" -> 44-50,22-50,66-50,77-50,99-50.
    - Digitos pegados en pares: "10203040 de 100" -> 10-100,20-100,30-100,40-100.
