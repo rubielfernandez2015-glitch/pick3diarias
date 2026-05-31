@@ -695,6 +695,9 @@ textarea{resize:vertical;min-height:50px;}
 <!-- PANEL AJUSTES DEL BANQUERO -->
 <div class="PNL" id="P-ajustes">
 
+  <!-- ===== VISTA MENÚ (portada) ===== -->
+  <div id="AJ-menu">
+
   <!-- HERRAMIENTA RESUMEN POR FOTOS (destacada arriba) -->
   <div class="CD" style="border-color:rgba(58,122,176,.55);background:linear-gradient(180deg,rgba(58,122,176,.10),transparent);">
     <div class="CT">📸 Conteo por fotos (resumen)</div>
@@ -705,17 +708,35 @@ textarea{resize:vertical;min-height:50px;}
     </div>
   </div>
 
-  <!-- PERFIL -->
+  <!-- DATOS DE LA CUENTA (siempre visibles) -->
   <div class="CD">
-    <div class="CT">👤 Perfil del Banquero</div>
-    <div style="background:var(--b3);border:1px solid var(--br);border-radius:10px;padding:1rem;margin-bottom:.75rem;">
+    <div style="background:var(--b3);border:1px solid var(--br);border-radius:10px;padding:1rem;margin-bottom:.6rem;">
       <div style="font-size:10px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Correo</div>
       <div id="AJ-email" style="font-size:14px;color:var(--tx);font-weight:600;">--</div>
     </div>
-    <div style="margin-bottom:.7rem;">
-      <div style="font-size:10px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Código de tu banca <span style="text-transform:none;color:var(--t3);">· dáselo a tus recolectores para iniciar sesión</span></div>
+    <div>
+      <div style="font-size:10px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Código de tu banca <span style="text-transform:none;color:var(--t3);">· dáselo a tus recolectores</span></div>
       <div id="AJ-codigo" style="font-size:22px;color:var(--dc);font-weight:800;letter-spacing:4px;font-family:'Bebas Neue';">--</div>
     </div>
+  </div>
+
+  <!-- BOTONERA -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+    <button onclick="abrirAjuste('perfil')" style="background:var(--b3);border:1px solid var(--br);border-radius:10px;padding:16px 8px;color:var(--tx);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;line-height:1.4;"><span style="font-size:22px;">👤</span><br>Perfil y clave</button>
+    <button onclick="abrirAjuste('resultado')" style="background:var(--b3);border:1px solid var(--br);border-radius:10px;padding:16px 8px;color:var(--tx);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;line-height:1.4;"><span style="font-size:22px;">🎯</span><br>Modo resultado</button>
+    <button onclick="abrirAjuste('zona')" style="background:var(--b3);border:1px solid var(--br);border-radius:10px;padding:16px 8px;color:var(--tx);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;line-height:1.4;"><span style="font-size:22px;">🌐</span><br>Zona horaria</button>
+    <button onclick="abrirAjuste('pago')" style="background:var(--b3);border:1px solid var(--br);border-radius:10px;padding:16px 8px;color:var(--tx);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;line-height:1.4;"><span style="font-size:22px;">💰</span><br>Premios</button>
+    <button onclick="abrirAjuste('peligro')" style="background:var(--b3);border:1px solid rgba(192,57,43,.4);border-radius:10px;padding:16px 8px;color:var(--rc);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;line-height:1.4;"><span style="font-size:22px;">🗑️</span><br>Zona de peligro</button>
+  </div>
+
+  </div><!-- /AJ-menu -->
+
+  <!-- ===== DETALLE: PERFIL ===== -->
+  <div id="AJ-det-perfil" class="AJ-detalle" style="display:none;">
+    <button onclick="cerrarAjuste()" style="background:transparent;border:none;color:var(--dc);font-size:14px;cursor:pointer;font-family:inherit;padding:4px 0;margin-bottom:6px;">← Volver</button>
+  <!-- PERFIL -->
+  <div class="CD">
+    <div class="CT">👤 Perfil del Banquero</div>
     <label>Nombre del banquero</label>
     <input type="text" id="AJ-nombre-banca" placeholder="Ej: Juan Pérez...">
     <label>Número de WhatsApp <span style="font-size:9px;color:var(--t3);">(con código de país, ej: 5355512345)</span></label>
@@ -730,7 +751,11 @@ textarea{resize:vertical;min-height:50px;}
     <input type="password" id="AJ-pass-conf" placeholder="Repite la nueva contraseña..." autocomplete="new-password">
     <button class="BTN BS" style="margin-top:.75rem;font-size:15px;" onclick="cambiarPassBanquero()">Cambiar contraseña</button>
   </div>
+  </div><!-- /AJ-det-perfil -->
 
+  <!-- ===== DETALLE: RESULTADO ===== -->
+  <div id="AJ-det-resultado" class="AJ-detalle" style="display:none;">
+    <button onclick="cerrarAjuste()" style="background:transparent;border:none;color:var(--dc);font-size:14px;cursor:pointer;font-family:inherit;padding:4px 0;margin-bottom:6px;">← Volver</button>
   <!-- RESULTADO -->
   <div class="CD">
     <div class="CT">🎯 Modo de Resultado</div>
@@ -769,7 +794,11 @@ textarea{resize:vertical;min-height:50px;}
     <button class="BTN BS" style="margin-top:.75rem;font-size:15px;" onclick="guardarModoResultado()">Guardar configuración</button>
     <div id="AJ-modo-actual" style="font-size:11px;color:var(--t3);margin-top:8px;text-align:center;"></div>
   </div>
+  </div><!-- /AJ-det-resultado -->
 
+  <!-- ===== DETALLE: ZONA HORARIA ===== -->
+  <div id="AJ-det-zona" class="AJ-detalle" style="display:none;">
+    <button onclick="cerrarAjuste()" style="background:transparent;border:none;color:var(--dc);font-size:14px;cursor:pointer;font-family:inherit;padding:4px 0;margin-bottom:6px;">← Volver</button>
   <!-- ZONA HORARIA -->
   <div class="CD">
     <div class="CT">🌐 Zona Horaria</div>
@@ -784,7 +813,11 @@ textarea{resize:vertical;min-height:50px;}
     <div id="AJ-tz-actual" style="font-size:11px;color:var(--t3);margin-top:6px;text-align:center;"></div>
     <button class="BTN BS" style="margin-top:.75rem;font-size:15px;" onclick="guardarTimezone()">Guardar zona horaria</button>
   </div>
+  </div><!-- /AJ-det-zona -->
 
+  <!-- ===== DETALLE: PREMIOS ===== -->
+  <div id="AJ-det-pago" class="AJ-detalle" style="display:none;">
+    <button onclick="cerrarAjuste()" style="background:transparent;border:none;color:var(--dc);font-size:14px;cursor:pointer;font-family:inherit;padding:4px 0;margin-bottom:6px;">← Volver</button>
   <!-- PAGO DE PREMIOS -->
   <div class="CD">
     <div class="CT">💰 Configuración de Premios</div>
@@ -796,13 +829,18 @@ textarea{resize:vertical;min-height:50px;}
     <div id="AJ-pago-actual" style="font-size:11px;color:var(--t3);margin-top:6px;"></div>
     <button class="BTN BS" style="margin-top:.75rem;font-size:15px;" onclick="guardarPago()">Guardar multiplicador</button>
   </div>
+  </div><!-- /AJ-det-pago -->
 
+  <!-- ===== DETALLE: PELIGRO ===== -->
+  <div id="AJ-det-peligro" class="AJ-detalle" style="display:none;">
+    <button onclick="cerrarAjuste()" style="background:transparent;border:none;color:var(--dc);font-size:14px;cursor:pointer;font-family:inherit;padding:4px 0;margin-bottom:6px;">← Volver</button>
   <!-- PELIGRO -->
   <div class="CD" style="border-color:rgba(192,57,43,.3);">
     <div class="CT" style="color:var(--rc);">⚠️ Zona de Peligro</div>
     <div style="font-size:11px;color:var(--t3);margin-bottom:.75rem;">Acciones irreversibles. Úsalas con cuidado.</div>
     <button class="BTN BD" style="width:100%;font-size:14px;" onclick="confirmarBorrarHistorial()">🗑 Borrar todo el historial de jugadas</button>
   </div>
+  </div><!-- /AJ-det-peligro -->
 
 </div>
 
@@ -5046,7 +5084,21 @@ function copiarLinkResumen(){
     .catch(()=>{const ta=document.createElement('textarea');ta.value=u;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('Enlace copiado');});
 }
 
+// Menú de Ajustes: abrir una sección / volver a la portada.
+function abrirAjuste(id){
+  const m=document.getElementById('AJ-menu'); if(m)m.style.display='none';
+  document.querySelectorAll('.AJ-detalle').forEach(d=>d.style.display='none');
+  const el=document.getElementById('AJ-det-'+id); if(el)el.style.display='block';
+  try{window.scrollTo(0,0);}catch(_){}
+}
+function cerrarAjuste(){
+  document.querySelectorAll('.AJ-detalle').forEach(d=>d.style.display='none');
+  const m=document.getElementById('AJ-menu'); if(m)m.style.display='block';
+  try{window.scrollTo(0,0);}catch(_){}
+}
+
 async function loadAjustes(){
+  try{cerrarAjuste();}catch(_){}
   const bId=await getBID();
   if(!bId)return;
   // Email
