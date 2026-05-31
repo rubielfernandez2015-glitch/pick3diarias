@@ -62,7 +62,7 @@ const sb = supabase.createClient(SUPABASE_URL, ANON_KEY);
 const $ = id => document.getElementById(id);
 
 let jugadas = [];      // {pick, monto}
-let fotosOK = 0, fotosErr = 0, noLeidas = 0;
+let fotosOK = 0, fotosErr = 0, noLeidas = 0, ultimoError = '';
 
 // Mismas reglas que la app (NN-monto, separadores - _ espacio de con, coma decimal)
 function separar(l){
@@ -120,6 +120,7 @@ async function procesar(e){
       fotosOK++; if(!algo){/* foto sin jugadas legibles */}
     }catch(err){
       fotosErr++;
+      ultimoError = err.message;
       $('stat').innerHTML = `<span class="bad">Foto ${i+1}: ${err.message}</span>`;
     }
   }
@@ -152,9 +153,11 @@ function render(){
   let avisos = [];
   if(fotosOK) avisos.push(`✓ ${fotosOK} foto(s) leída(s)`);
   if(noLeidas) avisos.push(`⚠️ ${noLeidas} renglón(es) no se entendieron — revisa los papeles dudosos`);
-  if(fotosErr) avisos.push(`✗ ${fotosErr} foto(s) fallaron`);
+  if(fotosErr) avisos.push(`✗ ${fotosErr} foto(s) fallaron: ${ultimoError}`);
   $('aviso').textContent = avisos.join(' · ');
-  $('stat').textContent = jugadas.length ? `Listo. Revisa el resumen abajo.` : (fotosErr?'':'No se detectaron jugadas.');
+  if(jugadas.length) $('stat').textContent = 'Listo. Revisa el resumen abajo.';
+  else if(fotosErr) $('stat').innerHTML = `<span class="bad">Error: ${ultimoError}</span>`;
+  else $('stat').textContent = 'No se detectaron jugadas en la(s) foto(s). Prueba con mejor luz/enfoque.';
 }
 
 function copiar(){
