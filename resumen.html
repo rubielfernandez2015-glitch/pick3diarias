@@ -36,23 +36,6 @@
     <button class="b-gr" onclick="const i=document.getElementById('gal');i.value='';i.click();">🖼️ Subir fotos</button>
   </div>
   <div class="muted">Puedes subir varias fotos a la vez. Para que lea bien: buena luz, papel plano y enfocado.</div>
-  <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:var(--t2);">
-    <span>¿Hoja de varias columnas?</span>
-    <select id="cols" style="background:var(--b3);border:1px solid var(--br);color:var(--tx);border-radius:6px;padding:6px 8px;font-size:13px;">
-      <option value="1">1 columna (normal)</option>
-      <option value="2">2 columnas</option>
-      <option value="3">3 columnas</option>
-      <option value="4">4 columnas</option>
-      <option value="5">5 columnas</option>
-      <option value="6">6 columnas</option>
-    </select>
-    <select id="filas" style="background:var(--b3);border:1px solid var(--br);color:var(--tx);border-radius:6px;padding:6px 8px;font-size:13px;">
-      <option value="1">1 fila</option>
-      <option value="2">+ partir arriba/abajo (más zoom)</option>
-      <option value="3">+ partir en 3 (máx zoom)</option>
-    </select>
-  </div>
-  <div class="muted">Si la hoja viene en columnas (como la libreta), elige cuántas: el sistema la <b>parte y lee cada columna sola</b> (lee mucho mejor y no cruza columnas). Si está muy apretada, agrega "partir arriba/abajo" para más zoom.</div>
   <div class="stat" id="stat"></div>
 
   <div class="card" id="card-res" style="display:none">
@@ -138,18 +121,15 @@ async function procesar(e){
   const files = Array.from(e.target.files||[]);
   if(!files.length) return;
   if(!navigator.onLine){ $('stat').innerHTML='<span class="bad">Necesitas internet para leer las fotos.</span>'; return; }
-  const ncols = parseInt(($('cols')||{}).value||'1') || 1;
-  const nrows = parseInt(($('filas')||{}).value||'1') || 1;
   const ta = $('detalle');
   $('card-res').style.display='block';
-  // Cada foto se parte en ncols x nrows pedazos; cada pedazo se lee por separado.
   const trozos = [];
   for(const f of files){
-    try{ const strips = await recortarCuadricula(f, ncols, nrows); strips.forEach(s => trozos.push(s)); }
+    try{ const strips = await recortarCuadricula(f, 1, 1); strips.forEach(s => trozos.push(s)); }
     catch{ fotosErr++; ultimoError = 'no se pudo abrir la imagen'; }
   }
   const total = trozos.length;
-  const unidad = (ncols>1||nrows>1) ? 'parte' : 'foto';
+  const unidad = 'foto';
   for(let i=0;i<total;i++){
     $('stat').textContent = `⏳ Leyendo ${unidad} ${i+1} de ${total}…  (${totalJugadasAhora} jugadas hasta ahora)`;
     try{
