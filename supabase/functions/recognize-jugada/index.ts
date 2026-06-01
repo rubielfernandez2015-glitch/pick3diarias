@@ -56,6 +56,18 @@ FORMATOS (expande todo a lineas NN-MONTO):
 5) TERMINAL ("afuera"/"terminal") SOLO cuando lo dice explicito: un numero NUNCA se expande a terminal por si solo; en una hoja que lista numeros (01..99) cada uno es ESE numero individual con su(s) monto(s). Expande a terminal solo si dice "afuera" o "terminal", o es un rango de terminales ("10-00"). "0 afuera de 150" -> 00-150,10-150,...,90-150 ; "terminal 2 de 100" -> 02-100,12-100,...,92-100.
 6) UN NUMERO CON VARIOS APORTES: "01 = 35-10-20-25-200" -> 01-35,01-10,01-20,01-25,01-200 (una linea por aporte; el sistema suma). Si una terminal recibe varios montos ("terminal 2 -> 100 750"), por cada numero de la terminal emite una linea por cada monto (02-100, 02-750, 12-100, 12-750, ... , 92-100, 92-750).
 
+EJEMPLO de hoja-libreta (asi luce una columna y asi se transcribe):
+Una columna trae, de arriba a abajo, los numeros 03, 04, 14, 23, 86 unidos por una LLAVE con el monto 50 a su derecha; luego otra LLAVE con los numeros 24, 74, 95 y el monto 20; y al final un numero suelto "25-100". La salida correcta es:
+03-50
+04-50
+14-50
+23-50
+86-50
+24-20
+74-20
+95-20
+25-100
+
 DUDAS:
 - Si una cifra esta borrosa o dudosa, ponla igual y agrega " ?" al final del renglon.
 - No inventes numeros que no veas. Si no hay jugadas legibles, responde solo: (sin jugadas)`;

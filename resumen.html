@@ -46,8 +46,13 @@
       <option value="5">5 columnas</option>
       <option value="6">6 columnas</option>
     </select>
+    <select id="filas" style="background:var(--b3);border:1px solid var(--br);color:var(--tx);border-radius:6px;padding:6px 8px;font-size:13px;">
+      <option value="1">1 fila</option>
+      <option value="2">+ partir arriba/abajo (más zoom)</option>
+      <option value="3">+ partir en 3 (máx zoom)</option>
+    </select>
   </div>
-  <div class="muted">Si la hoja viene en columnas (como la libreta), elige cuántas: el sistema la <b>parte y lee cada columna sola</b> (lee mucho mejor y no cruza columnas).</div>
+  <div class="muted">Si la hoja viene en columnas (como la libreta), elige cuántas: el sistema la <b>parte y lee cada columna sola</b> (lee mucho mejor y no cruza columnas). Si está muy apretada, agrega "partir arriba/abajo" para más zoom.</div>
   <div class="stat" id="stat"></div>
 
   <div class="card" id="card-res" style="display:none">
@@ -93,21 +98,24 @@ function separar(l){
 
 // Parte la imagen (desde el ORIGINAL) en n tiras verticales = columnas. Cada tira
 // se lee sola: la IA no cruza columnas y los digitos van mas grandes. n=1 = entera.
-async function recortarColumnas(file, n){
+async function recortarCuadricula(file, ncols, nrows){
   let src,W,H;
   try{ src=await createImageBitmap(file,{imageOrientation:'from-image'}); }
   catch{ src=await new Promise((r,j)=>{const im=new Image();im.onload=()=>r(im);im.onerror=()=>j(new Error('img'));im.src=URL.createObjectURL(file);}); }
   W=src.width; H=src.height;
-  const target = n>1 ? 2600 : 2048;
+  const target = (ncols>1||nrows>1) ? 2600 : 2048;
   const out=[];
-  for(let i=0;i<n;i++){
-    const sx=Math.floor(W*i/n), sw=Math.min(Math.ceil(W/n), W-Math.floor(W*i/n));
-    let dw=sw, dh=H;
-    const sc=target/Math.max(dw,dh);
-    if(sc<1){ dw=Math.round(dw*sc); dh=Math.round(dh*sc); }
-    const c=document.createElement('canvas'); c.width=dw; c.height=dh;
-    c.getContext('2d').drawImage(src, sx,0, sw,H, 0,0, dw,dh);
-    out.push(c.toDataURL('image/jpeg',0.9).split(',')[1]);
+  for(let cx=0;cx<ncols;cx++){
+    for(let ry=0;ry<nrows;ry++){
+      const sx=Math.floor(W*cx/ncols), sw=Math.min(Math.ceil(W/ncols), W-sx);
+      const sy=Math.floor(H*ry/nrows), sh=Math.min(Math.ceil(H/nrows), H-sy);
+      let dw=sw, dh=sh;
+      const sc=target/Math.max(dw,dh);
+      if(sc<1){ dw=Math.round(dw*sc); dh=Math.round(dh*sc); }
+      const c=document.createElement('canvas'); c.width=dw; c.height=dh;
+      c.getContext('2d').drawImage(src, sx,sy, sw,sh, 0,0, dw,dh);
+      out.push(c.toDataURL('image/jpeg',0.9).split(',')[1]);
+    }
   }
   if(src.close)src.close();
   return out;
@@ -131,16 +139,17 @@ async function procesar(e){
   if(!files.length) return;
   if(!navigator.onLine){ $('stat').innerHTML='<span class="bad">Necesitas internet para leer las fotos.</span>'; return; }
   const ncols = parseInt(($('cols')||{}).value||'1') || 1;
+  const nrows = parseInt(($('filas')||{}).value||'1') || 1;
   const ta = $('detalle');
   $('card-res').style.display='block';
-  // Cada foto se parte en ncols columnas (tiras); cada tira se lee por separado.
+  // Cada foto se parte en ncols x nrows pedazos; cada pedazo se lee por separado.
   const trozos = [];
   for(const f of files){
-    try{ const strips = await recortarColumnas(f, ncols); strips.forEach(s => trozos.push(s)); }
+    try{ const strips = await recortarCuadricula(f, ncols, nrows); strips.forEach(s => trozos.push(s)); }
     catch{ fotosErr++; ultimoError = 'no se pudo abrir la imagen'; }
   }
   const total = trozos.length;
-  const unidad = ncols>1 ? 'columna' : 'foto';
+  const unidad = (ncols>1||nrows>1) ? 'parte' : 'foto';
   for(let i=0;i<total;i++){
     $('stat').textContent = `⏳ Leyendo ${unidad} ${i+1} de ${total}…  (${totalJugadasAhora} jugadas hasta ahora)`;
     try{
