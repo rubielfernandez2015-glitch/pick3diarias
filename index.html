@@ -938,15 +938,15 @@ textarea{resize:vertical;min-height:50px;}
     </div>
     <div class="FOB"><div class="FL">Fondo Disponible del Banquero</div><div class="FON" id="FONN">0 CUP</div><div style="font-size:10px;color:var(--t3);margin-top:5px;">Inicial + Acumulado previo + Ganancias diarias + Ajustes</div></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:.9rem;">
-      <button class="BTN BP" style="font-size:16px;margin-top:0;background:linear-gradient(135deg,#1a5276,#2e86c1);" onclick="abrirAjuste('+')">+ Agregar al Fondo</button>
-      <button class="BTN BD" style="font-size:16px;margin-top:0;" onclick="abrirAjuste('-')">− Restar del Fondo</button>
+      <button class="BTN BP" style="font-size:16px;margin-top:0;background:linear-gradient(135deg,#1a5276,#2e86c1);" onclick="abrirAjusteFondo('+')">+ Agregar al Fondo</button>
+      <button class="BTN BD" style="font-size:16px;margin-top:0;" onclick="abrirAjusteFondo('-')">− Restar del Fondo</button>
     </div>
     <div class="CD" id="FO-ajuste-panel" style="display:none;">
       <div class="CT" id="FO-ajuste-titulo">Agregar al Fondo</div>
       <label>Monto (CUP)</label><input type="number" id="FO-monto-ajuste" placeholder="Ej: 5000" min="0.5" step="0.5">
       <label>Descripción</label><textarea id="FO-desc-ajuste" placeholder="Ej: Recarga de capital..."></textarea>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <button class="BTN BS" style="font-size:15px;" onclick="cerrarAjuste()">Cancelar</button>
+        <button class="BTN BS" style="font-size:15px;" onclick="cerrarAjusteFondo()">Cancelar</button>
         <button class="BTN BP" style="font-size:15px;" id="FO-btn-guardar-ajuste" onclick="guardarAjuste()">Guardar</button>
       </div>
     </div>
@@ -3716,8 +3716,11 @@ async function loadGR(){
 // hoy: SQL directo (mismo patron usado en MIGRACION_acumulados_legacy.sql).
 
 let ajusteSigno='+';
-function abrirAjuste(signo){ajusteSigno=signo;document.getElementById('FO-ajuste-panel').style.display='block';document.getElementById('FO-ajuste-titulo').textContent=signo==='+'?'Agregar al Fondo':'Restar del Fondo';document.getElementById('FO-btn-guardar-ajuste').style.background=signo==='+'?'linear-gradient(135deg,#1a5276,#2e86c1)':'var(--r)';document.getElementById('FO-monto-ajuste').value='';document.getElementById('FO-desc-ajuste').value='';document.getElementById('FO-monto-ajuste').focus();}
-function cerrarAjuste(){document.getElementById('FO-ajuste-panel').style.display='none';}
+// OJO: nombres con sufijo Fondo a propósito. Existe otro par abrirAjuste/cerrarAjuste
+// (menú de Ajustes, ~línea 5111) y como se define después pisaba a estas → los botones
+// + Agregar / − Restar del Fondo dejaban de hacer nada. No volver a llamarlas abrirAjuste.
+function abrirAjusteFondo(signo){ajusteSigno=signo;document.getElementById('FO-ajuste-panel').style.display='block';document.getElementById('FO-ajuste-titulo').textContent=signo==='+'?'Agregar al Fondo':'Restar del Fondo';document.getElementById('FO-btn-guardar-ajuste').style.background=signo==='+'?'linear-gradient(135deg,#1a5276,#2e86c1)':'var(--r)';document.getElementById('FO-monto-ajuste').value='';document.getElementById('FO-desc-ajuste').value='';document.getElementById('FO-monto-ajuste').focus();}
+function cerrarAjusteFondo(){document.getElementById('FO-ajuste-panel').style.display='none';}
 async function guardarAjuste(){
   const monto=parseFloat(document.getElementById('FO-monto-ajuste').value),desc=document.getElementById('FO-desc-ajuste').value.trim();
   if(isNaN(monto)||monto<=0)return toast('Ingresa un monto válido',true);
@@ -3725,7 +3728,7 @@ async function guardarAjuste(){
   const bIdFI=await getBID();
   const {error}=await sb.from('fondo_movimientos').insert({fecha:etHoy(),tipo:'ajuste_manual',monto:ajusteSigno==='+'?monto:-monto,descripcion:desc,banquero_id:bIdFI});
   if(error)return toast('Error: '+error.message,true);
-  cerrarAjuste();toast((ajusteSigno==='+'?'✓ Agregado: +':'✓ Restado: -')+monto.toFixed(2)+' CUP');await loadFo();
+  cerrarAjusteFondo();toast((ajusteSigno==='+'?'✓ Agregado: +':'✓ Restado: -')+monto.toFixed(2)+' CUP');await loadFo();
 }
 
 async function loadFo(){
