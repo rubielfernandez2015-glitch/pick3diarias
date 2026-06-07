@@ -2,14 +2,6 @@
 const CACHE_NAME = 'bolita-v3';
 const OFFLINE_URL = '/';
 
-// Recursos que se cachean al instalar
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
-  'https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Syne:wght@400;600;700&display=swap'
-];
-
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {

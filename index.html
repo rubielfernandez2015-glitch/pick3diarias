@@ -1258,6 +1258,8 @@ const etHoy=()=>{const e=new Date(new Date().toLocaleString('en-US',{timeZone:'A
 const p2=n=>String(n).padStart(2,'0');
 const fx=n=>parseFloat(parseFloat(n).toFixed(2));
 const fmtF=f=>{const[y,m,d]=f.split('-');const dt=new Date(+y,+m-1,+d);return['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][dt.getDay()]+' '+d+'/'+m+'/'+y;};
+// Fecha ISO "YYYY-MM-DD" -> "lun, 9 jun" (formato corto es-ES). Centraliza el patrón repetido en historial/ganancias/wallet/exportar.
+const fmtFCorta=f=>{const[y,m,d]=f.split('-');return new Date(+y,+m-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});};
 const sigDia=()=>{const e=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));e.setDate(e.getDate()+1);return e.getFullYear()+'-'+p2(e.getMonth()+1)+'-'+p2(e.getDate());};
 // Escapa datos de usuario antes de inyectarlos en innerHTML (anti-XSS almacenado)
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -3097,8 +3099,12 @@ async function applyR(ns){
     // cierre (doble-click escapado o desde otro dispositivo) ejecute cerrar_sesion
     // sin pendientes, calcule totales=0 y sobreescriba la fila real en `resultados`.
     // Para cambiar el número de un cierre, hay que Revertir explícitamente primero.
+    // Sin banca resuelta no podemos verificar de forma fiable si el día ya está
+    // cerrado (un banquero_id vacío no haría match y saltaría la guarda de abajo).
+    const bidR=await getBID();
+    if(!bidR){toast('No se pudo identificar tu banca. Reintenta.',true);return;}
     const {data:resYa}=await sb.from('resultados').select('numero,total_rec')
-      .eq('fecha',fecha).eq('sesion',sesion).eq('banquero_id',banqueroId||'').maybeSingle();
+      .eq('fecha',fecha).eq('sesion',sesion).eq('banquero_id',bidR).maybeSingle();
     if(resYa){
       if(resYa.numero===num){
         toast('Este día ya está cerrado con el número '+num+'.');
@@ -3297,8 +3303,8 @@ async function loadResR(){
       else{res=(data&&data[0])||null;rpcOK=true;}
     }catch{/* rpcOK queda false → fallback */}
   }
-  if(!rpcOK){
-    const {data}=await sb.from('resultados').select('*').eq('fecha',hoy).eq('sesion',sesionActualR).eq('banquero_id',banqueroId||'').maybeSingle();
+  if(!rpcOK&&banqueroId){
+    const {data}=await sb.from('resultados').select('*').eq('fecha',hoy).eq('sesion',sesionActualR).eq('banquero_id',banqueroId).maybeSingle();
     res=data;
   }
   if(!res){
@@ -3394,8 +3400,7 @@ async function loadHist(){
       const comI=fx(rec*(com/100));
       const totJug=fr[0].total_jugadas;
       const fid=fecha.replace(/-/g,'');
-      const [y,m,d]=fecha.split('-');
-      const fd=new Date(+y,+m-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+      const fd=fmtFCorta(fecha);
       // Sesiones del día (orden día→noche) con su número
       const sesArr=(numsPorFechaR[fecha]||[]).slice().sort((a,b)=>a.sesion==='dia'?-1:(b.sesion==='dia'?1:0));
       const numsDisp=sesArr.length
@@ -3427,8 +3432,7 @@ async function loadHist(){
   });
 
   div.innerHTML=Object.entries(porFecha).map(([fecha,sesiones])=>{
-    const [y,m,d]=fecha.split('-');
-    const f=new Date(+y,+m-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+    const f=fmtFCorta(fecha);
     const fid=fecha.replace(/-/g,'');
     const totalRec=sesiones.reduce((s,r)=>s+parseFloat(r.total_rec||0),0);
     const totalPrem=sesiones.reduce((s,r)=>s+parseFloat(r.total_premios||0),0);
@@ -3584,7 +3588,7 @@ async function loadGA(){
   const items=[...itemsAsc].reverse();
   document.getElementById('GPOS').textContent=pos.toFixed(2);document.getElementById('GNEG').textContent=neg.toFixed(2);
   const neto=fx(pos-neg);const el=document.getElementById('GNETO');el.textContent=(neto>=0?'+':'')+neto.toFixed(2)+' CUP';el.style.color=neto>=0?'var(--vc)':'var(--rc)';
-  div.innerHTML=items.map(r=>{const [y,m,d]=r.fecha.split('-');const f=new Date(+y,+m-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});const esN=r.sesion==='noche';const sB=esN?'<span style="font-size:9px;color:#c8b4ff;font-weight:700;background:rgba(200,180,255,.15);padding:1px 5px;border-radius:4px;margin-left:4px;">&#127769; Noche</span>':'<span style="font-size:9px;color:#ffd369;font-weight:700;background:rgba(255,211,105,.12);padding:1px 5px;border-radius:4px;margin-left:4px;">&#127749; Día</span>';return`<div class="GI"><div><div class="GF">${f} · N° ${r.numero}${sB}</div><div class="GD">Rec: ${parseFloat(r.total_rec||0).toFixed(2)} · Prem: ${parseFloat(r.total_premios||0).toFixed(2)} · Com: ${parseFloat(r.comision_rec||0).toFixed(2)} CUP</div></div><div style="text-align:right;"><div class="GV ${r.g>=0?'p':'n'}">${r.g>=0?'+':''}${r.g.toFixed(2)} CUP</div><div class="GA">Acum: ${r.acum>=0?'+':''}${r.acum.toFixed(2)}</div></div></div>`;}).join('');
+  div.innerHTML=items.map(r=>{const f=fmtFCorta(r.fecha);const esN=r.sesion==='noche';const sB=esN?'<span style="font-size:9px;color:#c8b4ff;font-weight:700;background:rgba(200,180,255,.15);padding:1px 5px;border-radius:4px;margin-left:4px;">&#127769; Noche</span>':'<span style="font-size:9px;color:#ffd369;font-weight:700;background:rgba(255,211,105,.12);padding:1px 5px;border-radius:4px;margin-left:4px;">&#127749; Día</span>';return`<div class="GI"><div><div class="GF">${f} · N° ${r.numero}${sB}</div><div class="GD">Rec: ${parseFloat(r.total_rec||0).toFixed(2)} · Prem: ${parseFloat(r.total_premios||0).toFixed(2)} · Com: ${parseFloat(r.comision_rec||0).toFixed(2)} CUP</div></div><div style="text-align:right;"><div class="GV ${r.g>=0?'p':'n'}">${r.g>=0?'+':''}${r.g.toFixed(2)} CUP</div><div class="GA">Acum: ${r.acum>=0?'+':''}${r.acum.toFixed(2)}</div></div></div>`;}).join('');
 }
 
 async function loadGR(){
@@ -3688,8 +3692,7 @@ async function loadGR(){
     const prem=fx(parseFloat(r.total_prem||0));
     const com=fx(rec*(myComP/100));
     totalAcum=fx(totalAcum+com);
-    const [y,m,d]=r.dia_cierre.split('-');
-    const f=new Date(+y,+m-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+    const f=fmtFCorta(r.dia_cierre);
     const sesTagGR=sesionMapGR[r.dia_cierre]||'dia';
     const sesionBadge=sesTagGR==='noche'
       ?'<span style="font-size:9px;color:#c8b4ff;font-weight:700;background:rgba(200,180,255,.15);padding:1px 5px;border-radius:4px;margin-left:4px;">🌙 Noche</span>'
@@ -3697,8 +3700,7 @@ async function loadGR(){
     return {f,rec,prem,com,numero:r.numero_ganador||'--',acum:totalAcum,tipo:'cierre',sesionBadge};
   }).reverse();
   const itemsManuales=(manuales||[]).map(m=>{
-    const [y,mo,d]=m.fecha.split('-');
-    const f=new Date(+y,+mo-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+    const f=fmtFCorta(m.fecha);
     return {f,com:parseFloat(m.comision||0),nota:m.nota||'',tipo:'manual'};
   });
   document.getElementById('RACUM').textContent=totalAcum.toFixed(2)+' CUP';
@@ -3748,7 +3750,7 @@ async function loadFo(){
   const movs=mv||[];
   const divLFO=document.getElementById('LFO');
   if(!movs.length)divLFO.innerHTML='<div class="EM"><span class="bg">📊</span>Sin movimientos aún</div>';
-  else divLFO.innerHTML=movs.map(m=>{const pos=parseFloat(m.monto)>=0;const [y,mo,d]=m.fecha.split('-');const f=new Date(+y,+mo-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});return`<div class="GI"><input type="checkbox" class="JCK fo-chk" data-id="${m.id}" style="flex-shrink:0;"><div style="flex:1;margin-left:8px;"><div class="GF">${f} · ${esc(m.descripcion||m.tipo)}</div><div class="GD">${esc(m.tipo)}</div></div><div style="text-align:right;"><div class="GV ${pos?'p':'n'}">${pos?'+':''}${parseFloat(m.monto).toFixed(2)} CUP</div></div></div>`;}).join('');
+  else divLFO.innerHTML=movs.map(m=>{const pos=parseFloat(m.monto)>=0;const f=fmtFCorta(m.fecha);return`<div class="GI"><input type="checkbox" class="JCK fo-chk" data-id="${m.id}" style="flex-shrink:0;"><div style="flex:1;margin-left:8px;"><div class="GF">${f} · ${esc(m.descripcion||m.tipo)}</div><div class="GD">${esc(m.tipo)}</div></div><div style="text-align:right;"><div class="GV ${pos?'p':'n'}">${pos?'+':''}${parseFloat(m.monto).toFixed(2)} CUP</div></div></div>`;}).join('');
   const {data:rrAll}=await sb.from('resultados').select('*').eq('banquero_id',bIdFL);const arr=rrAll||[];
   const tR=fx(arr.reduce((s,x)=>s+parseFloat(x.total_rec||0),0)),tP=fx(arr.reduce((s,x)=>s+parseFloat(x.total_premios||0),0)),tC=fx(arr.reduce((s,x)=>s+parseFloat(x.comision_rec||0),0)),tG=fx(arr.reduce((s,x)=>s+parseFloat(x.ganancia_banquero||0),0));
   document.getElementById('FACUM').innerHTML=
@@ -4049,8 +4051,7 @@ async function refrescarWallet(id){
   const div=document.getElementById('WL-movs');
   if(!movs||!movs.length){div.innerHTML='<div style="font-size:11px;color:var(--t3);text-align:center;padding:8px;">Sin movimientos aún</div>';return;}
   div.innerHTML=movs.map(m=>{
-    const [y,mo,d]=m.fecha.split('-');
-    const f=new Date(+y,+mo-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+    const f=fmtFCorta(m.fecha);
     const esE=m.tipo==='entrega';
     const color=esE?'var(--vc)':'var(--dc)';
     const signo=esE?'↑ -':'↓ +';
@@ -4148,8 +4149,7 @@ async function genRec(){
     const prem=fx(gans.reduce((s2,j)=>s2+parseFloat(j.monto)*PAGO,0));
     const comI=fx(rec2*(com/100));
     tR+=rec2;tP+=prem;tC+=comI;
-    const [y,m2,d]=fecha.split('-');
-    const f=new Date(+y,+m2-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+    const f=fmtFCorta(fecha);
     txt+=f+' | J:'+fjj.length+' Rec:'+rec2.toFixed(2)+' Prem:'+prem.toFixed(2)+' Com:'+comI.toFixed(2)+(res.numero?' N°:'+res.numero:'')+'\n';
   });
   txt+=s+'\nTOTAL Rec:'+fx(tR).toFixed(2)+' Prem:'+fx(tP).toFixed(2)+' Com:'+fx(tC).toFixed(2)+' CUP\n';
@@ -4267,8 +4267,7 @@ async function loadResumen(){
     const totalRec=sesiones.reduce((s,r)=>s+parseFloat(r.total_rec||0),0);
     const totalPrem=sesiones.reduce((s,r)=>s+parseFloat(r.total_premios||0),0);
     const totalCom=sesiones.reduce((s,r)=>s+parseFloat(r.comision_rec||0),0);
-    const [y,m,d]=fecha.split('-');
-    const f=new Date(+y,+m-1,+d).toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+    const f=fmtFCorta(fecha);
     const porRec=jj7Map[fecha]||{};
     const recRows=Object.entries(porRec).map(([rid,monto])=>{
       const nombre=rid==='admin'?'Admin':esc(recMap[rid]?.nombre||recMap[rid]?.username||rid.substring(0,6));
