@@ -19,7 +19,7 @@ const DESTINO: Record<string, string> = {
 };
 
 const BUILD = "2026-06-07-iso-mes-abreviado"; // marca de versión: aparece en cada respuesta JSON para confirmar qué código está desplegado
-const JINA_KEY = "jina_e4e6345c8c46419e873c4dc77d4ef3fagT6Bnc1Vc6Gq9PxMTPHVqSS2D2Pt";
+const JINA_KEY = Deno.env.get("JINA_KEY")!; // secreto de Supabase; NUNCA hardcodear (se filtró en git/GitGuardian)
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
