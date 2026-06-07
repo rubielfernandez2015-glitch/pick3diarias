@@ -147,21 +147,28 @@ Deno.serve(async (req) => {
 
     let lastErr = "sin respuesta";
     for (const key of keys) {
-      const gRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody },
-      );
-      const gJson = await gRes.json();
-      if (gRes.ok) {
-        const text = gJson.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") || "";
-        // Metrica de uso de la herramienta de resumen (no falla la respuesta si esto falla).
-        if (b) { try { await supabaseAdmin.rpc("log_uso_resumen", { p_codigo: String(b) }); } catch (_) { /* ignorar */ } }
-        return new Response(JSON.stringify({ text }), {
-          headers: { ...CORS, "Content-Type": "application/json" },
-        });
+      try {
+        const gRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+          // Timeout de 45s: si Gemini cuelga, no dejamos la función esperando hasta
+          // el límite del runtime; abortamos y probamos la siguiente key.
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody, signal: AbortSignal.timeout(45000) },
+        );
+        const gJson = await gRes.json();
+        if (gRes.ok) {
+          const text = gJson.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") || "";
+          // Metrica de uso de la herramienta de resumen (no falla la respuesta si esto falla).
+          if (b) { try { await supabaseAdmin.rpc("log_uso_resumen", { p_codigo: String(b) }); } catch (_) { /* ignorar */ } }
+          return new Response(JSON.stringify({ text }), {
+            headers: { ...CORS, "Content-Type": "application/json" },
+          });
+        }
+        // Esta key fallo (cupo agotado u otro error): guardamos el motivo y probamos la siguiente.
+        lastErr = gJson.error?.message || String(gRes.status);
+      } catch (e) {
+        // Timeout (45s) o error de red con esta key: probamos la siguiente en vez de abortar todo.
+        lastErr = (e as Error)?.name === "TimeoutError" ? "timeout 45s" : String((e as Error)?.message || e);
       }
-      // Esta key fallo (cupo agotado u otro error): guardamos el motivo y probamos la siguiente.
-      lastErr = gJson.error?.message || String(gRes.status);
     }
     // Todas las keys fallaron.
     return new Response(JSON.stringify({ error: "gemini: " + lastErr }), {
