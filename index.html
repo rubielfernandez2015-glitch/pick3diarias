@@ -2885,7 +2885,12 @@ async function recalcFondo(){
   const {data:mv}=await sb.from('fondo_movimientos').select('monto').eq('banquero_id',bIdRF);
   const ajustes=fx((mv||[]).reduce((s,m)=>s+parseFloat(m.monto||0),0));
   const nuevo=fx(base+acumPrev+ganDiario+ajustes);
-  await sb.from('clientes').upsert({nombre:'__FONDO__',ultimo:String(nuevo),banquero_id:bIdRF},{onConflict:'nombre,banquero_id'});
+  // Escribir __FONDO__ SOLO si el total cambió: un upsert con el mismo valor es un
+  // UPDATE no-op que igual dispara el trigger de auditoría (ruido sin valor forense).
+  const {data:ff}=await sb.from('clientes').select('ultimo').eq('nombre','__FONDO__').eq('banquero_id',bIdRF).maybeSingle();
+  if(!ff||fx(parseFloat(ff.ultimo))!==nuevo){
+    await sb.from('clientes').upsert({nombre:'__FONDO__',ultimo:String(nuevo),banquero_id:bIdRF},{onConflict:'nombre,banquero_id'});
+  }
   return{base,acumPrev,ganDiario,ajustes,nuevo};
 }
 
